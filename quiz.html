@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz de Otoscopia</title>
+    <link rel="stylesheet" href="style.css"> </head>
+<body>
+    <header>
+        <h1>Quiz de Otoscopia</h1>
+        <a href="index.html" class="quiz-button">Voltar ao Atlas</a>
+    </header>
+
+    <div id="quiz-container">
+        <img id="quiz-image" src="" alt="Pergunta do Quiz">
+        <p id="question-text">Qual é o diagnóstico desta imagem?</p>
+        <div id="answer-buttons" class="grid-container"></div>
+        <div id="feedback-text"></div>
+    </div>
+
+    <div id="score-container" style="display: none;">
+        <h2>Quiz Terminado!</h2>
+        <p>A sua pontuação foi: <span id="final-score"></span></p>
+        <button id="restart-button">Recomeçar Quiz</button>
+    </div>
+
+    <script src="quiz.js"></script>
+</body>
+</html>
