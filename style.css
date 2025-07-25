@@ -1,0 +1,97 @@
+/* Estilos Gerais e Cores Inspiradas na sua App */
+body {
+    font-family: sans-serif;
+    margin: 0;
+    background-color: #f0f4f8;
+    color: #333;
+}
+
+header {
+    background-color: #2d7a79; /* Tom de verde/azul da sua app */
+    color: white;
+    padding: 1rem;
+    text-align: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.quiz-button {
+    display: inline-block;
+    margin-top: 10px;
+    padding: 10px 20px;
+    background-color: #f9a825; /* Um amarelo para contraste */
+    color: white;
+    text-decoration: none;
+    border-radius: 5px;
+    font-weight: bold;
+}
+
+/* Grelha Responsiva para as Imagens */
+.grid-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+    padding: 1rem;
+}
+
+.grid-item {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform 0.2s;
+    background-color: white;
+}
+
+.grid-item:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+.grid-item img {
+    width: 100%;
+    height: 150px;
+    object-fit: cover;
+}
+
+.grid-item h3 {
+    text-align: center;
+    padding: 0.5rem;
+    margin: 0;
+    font-size: 1rem;
+}
+
+/* Estilos do Modal (Pop-up) */
+.modal {
+    display: none; 
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.7);
+    overflow: auto;
+}
+
+.modal-content {
+    background-color: #fff;
+    margin: 10% auto;
+    padding: 20px;
+    border-radius: 8px;
+    width: 80%;
+    max-width: 600px;
+    position: relative;
+}
+
+.close-button {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+#modal-image {
+    width: 100%;
+    border-radius: 5px;
+}
