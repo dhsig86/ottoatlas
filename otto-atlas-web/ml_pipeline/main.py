@@ -1,9 +1,35 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastai.vision.all import load_learner, PILImage
 import psycopg2
 import os
 import pathlib
+from PIL import Image
+import io
+import time
+import hashlib
+import requests
+import unicodedata
+import re
+
+try:
+    from ml_pipeline.auth import verify_admin
+except ModuleNotFoundError:
+    from auth import verify_admin  # type: ignore
+
+
+def normalize_class_name(name: str) -> str:
+    """
+    Sanitiza um nome de classe para armazenamento no backend e modelo ML.
+    Remove acentos, caracteres especiais, força snake_case lowercase.
+    Exemplo: "Otite Média Aguda" → "otite_media_aguda"
+    O display formatado (com acentos, title-case) fica exclusivamente no frontend.
+    """
+    n = ''.join(
+        c for c in unicodedata.normalize('NFD', name)
+        if unicodedata.category(c) != 'Mn'
+    )
+    n = re.sub(r'[^a-zA-Z0-9\s_]', '', n)
+    return '_'.join(n.lower().split())
 
 def get_database_url():
     env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
@@ -14,73 +40,186 @@ def get_database_url():
                     return line.strip().split("=", 1)[1]
     return os.environ.get("DATABASE_URL")
 
-app = FastAPI(title="OTOSCOP-IA Engine", description="FastAPI Backend for Fast.ai PyTorch Model")
+cloudinary_config = {"cloud_name": None, "api_key": None, "api_secret": None}
 
-# Permitir o Frontend React (localhost:5173) acessar o Python
+def setup_cloudinary():
+    global cloudinary_config
+    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+    c_url = os.environ.get("CLOUDINARY_URL")
+    if not c_url and os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("CLOUDINARY_URL="):
+                    c_url = line.strip().split("=", 1)[1]
+                    break
+    if c_url:
+        os.environ["CLOUDINARY_URL"] = c_url
+        try:
+            url_no_prefix = c_url.replace("cloudinary://", "")
+            api_key, rest = url_no_prefix.split(":", 1)
+            api_secret, cloud_name = rest.split("@", 1)
+            cloudinary_config["api_key"] = api_key
+            cloudinary_config["api_secret"] = api_secret
+            cloudinary_config["cloud_name"] = cloud_name
+            return True
+        except Exception:
+            return False
+    return False
+
+def upload_to_cloudinary_rest(file_contents, folder):
+    global cloudinary_config
+    
+    if not cloudinary_config.get("cloud_name"):
+        setup_cloudinary()
+        
+    cloud_name = cloudinary_config.get("cloud_name")
+    api_key = cloudinary_config.get("api_key")
+    api_secret = cloudinary_config.get("api_secret")
+    
+    if not cloud_name or not api_key or not api_secret:
+        raise Exception("Cloudinary variables are not properly loaded.")
+
+    timestamp = str(int(time.time()))
+    files = {'file': ('image.jpg', file_contents, 'image/jpeg')}
+    
+    params_to_sign = f"folder={folder}&timestamp={timestamp}{api_secret}"
+    signature = hashlib.sha1(params_to_sign.encode('utf-8')).hexdigest()
+
+    data = {
+        'api_key': api_key,
+        'timestamp': timestamp,
+        'folder': folder,
+        'signature': signature
+    }
+    
+    url = f"https://api.cloudinary.com/v1_1/{cloud_name}/image/upload"
+    response = requests.post(url, data=data, files=files, timeout=60)
+    
+    if response.status_code == 200:
+        return response.json().get("secure_url")
+    else:
+        raise Exception(f"Cloudinary REST API Error HTTP {response.status_code}: {response.text}")
+
+app = FastAPI(title="OTOSCOP-IA Engine", description="FastAPI Backend for ONNX Runtime")
+
+# Permitir o Frontend React (localhost:5173 e Prod)
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:4173",
+    "https://ottos-plum.vercel.app",
+    "https://atlas.drdariohart.com",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Variável de memória para a nossa Rede Neural (ResNet18)
-learn = None
+try:
+    # Contexto: rodando da raiz do repo (uvicorn ml_pipeline.main:app)
+    from ml_pipeline.routers.cms import router as cms_router
+except ModuleNotFoundError:
+    # Contexto: Render com Root Directory = ml_pipeline/ (uvicorn main:app)
+    from routers.cms import router as cms_router  # type: ignore
+app.include_router(cms_router)
 
-@app.on_event("startup")
-async def load_model():
-    global learn
-    model_path = os.path.join("models", "otto_diagnostic_model.pkl")
-    print("Iniciando motor OTOSCOP-IA...")
+
+@app.get("/health", tags=["System"])
+def health_check():
+    """Health check para o Render.com monitorar o serviço."""
+    return {"status": "ok", "model_loaded": ort_session is not None}
+
+# Variáveis de Memória Ultraleves (Apenas ONNX Session e Array de Strings)
+ort_session = None
+vocab = []
+
+
+def lazy_load_model():
+    global ort_session, vocab
+    if ort_session is not None:
+        return
+        
+    import onnxruntime as ort
+
+    # Em produção (Render Starter Disk), o modelo fica em /var/data
+    # Em desenvolvimento local, fica em ml_pipeline/models/
+    RENDER_DISK_PATH = "/var/data"
+    LOCAL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+    BASE_DIR = RENDER_DISK_PATH if os.path.isdir(RENDER_DISK_PATH) else LOCAL_PATH
+
+    model_path = os.path.join(BASE_DIR, "otto_model.onnx")
+    vocab_path = os.path.join(BASE_DIR, "vocab.txt")
+    print(f"Carregando ONNX de: {BASE_DIR}")
     
-    if os.path.exists(model_path):
-        # Correção de compatibilidade caso o modelo tenha sido treinado de forma cross-platform
-        temp = pathlib.PosixPath
-        pathlib.PosixPath = pathlib.WindowsPath
+    if os.path.exists(model_path) and os.path.exists(vocab_path):
         try:
-            learn = load_learner(model_path)
-            print(f"Sucesso! Modelo Neural Carregado: {learn.dls.vocab}")
+            with open(vocab_path, "r", encoding="utf-8") as f:
+                vocab = [line.strip() for line in f if line.strip()]
+            
+            opts = ort.SessionOptions()
+            opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+            
+            ort_session = ort.InferenceSession(model_path, sess_options=opts, providers=['CPUExecutionProvider'])
+            print(f"Sucesso! Cérebro ONNX Carregado. Vocabulário: {vocab}")
         except Exception as e:
-            print(f"Erro Crítico ao carregar MLOps: {e}")
-        finally:
-            pathlib.PosixPath = temp
+            print(f"Erro Fatal ONNX: {e}")
     else:
-        print(f"Alerta: Arquivo '{model_path}' não encontrado. A IA não está operante.")
+        print(f"Alerta: Modelo ONNX não encontrado em {BASE_DIR}. Verifique o Render Disk ou ml_pipeline/models/.")
+
 
 @app.post("/api/predict")
-async def predict_image(file: UploadFile = File(...)):
-    if not learn:
-        return {"error": "O cérebro PyTorch não está carregado. Verifique os logs do servidor."}
+def predict_image(file: UploadFile = File(...)):
+    lazy_load_model()
+    if not ort_session or not vocab:
+        return {"error": "O cérebro ONNX não está carregado. Verifique os logs do servidor."}
     
-    # Lemos os bytes físicos da imagem enviada pelo React
-    contents = await file.read()
+    contents = file.file.read()
     
-    # O Fast.ai processa bytes nativamente
-    img = PILImage.create(contents)
-    
-    # Inferência Viva na Rede Neural:
-    pred_class, pred_idx, probs = learn.predict(img)
-    
-    # Extração vocabular
-    vocab = learn.dls.vocab
-    prob_list = probs.tolist()
-    
-    # Construir JSON estruturado no formato que o TypeScript/React espera, 
-    # limpando sufixos indesejados como "-samples" e sublinhados
-    def clean_name(name):
-        return name.replace("-samples", "").replace("_", " ").title() if name.islower() else name.replace("-samples", "").replace("_", " ")
+    try:
+        import numpy as np
+        # Pre-processamento rigoroso de imagens matriciais ao estilo FastAI (3x224x224 RGB)
+        img = Image.open(io.BytesIO(contents)).convert("RGB")
+        img = img.resize((224, 224), Image.Resampling.BILINEAR)
         
-    predictions = [{"class": clean_name(str(v)), "confidence": float(p)} for v, p in zip(vocab, prob_list)]
-    
-    # Ordenar pelos maiores chutes primeiro
-    predictions.sort(key=lambda x: x["confidence"], reverse=True)
-    
-    # Retornar o formidável Top-3 Diferencial!
-    return predictions[:3]
+        # Desmontando Imagem para Tensores Float Baseados em [0..1]
+        img_arr = np.array(img).astype(np.float32) / 255.0
+        
+        # ImageNet Normalization Padrão do PyTorch
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        img_arr = (img_arr - mean) / std
+        
+        # O PyTorch Treinou como [Channels, Height, Width]! Então o eixo da Imagem precisa virar
+        img_arr = np.transpose(img_arr, (2, 0, 1))
+        # Fabricar Lote [Batch(=1), Channels(=3), Height(=224), Width(=224)]
+        input_tensor = np.expand_dims(img_arr, axis=0)
+        
+        # Roda inferência de C++ Nativo (Milissegundos)
+        inputs = {ort_session.get_inputs()[0].name: input_tensor}
+        logits = ort_session.run(None, inputs)[0][0]
+        
+        # Calibragem matemática Softmax (Distribuição Probabilística de 0 a 1)
+        exp_L = np.exp(logits - np.max(logits))
+        probs = exp_L / np.sum(exp_L)
+        
+        def clean_name(name):
+            return name.replace("-samples", "").replace("_", " ").title() if name.islower() else name.replace("-samples", "").replace("_", " ")
+        
+        # Combina classes com probabilidades e ordena
+        predictions = [{"class": clean_name(str(v)), "confidence": float(p)} for v, p in zip(vocab, probs)]
+        predictions.sort(key=lambda x: x["confidence"], reverse=True)
+        
+        return predictions[:3]
+        
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return {"error": f"Falha na inferência estrutural ONNX: {str(e)}"}
 
 @app.get("/api/curadoria/pending")
-def get_pending_feedback():
+def get_pending_feedback(_admin: str = Depends(verify_admin)):
     db_url = get_database_url()
     if not db_url:
         return {"error": "Database URL not found"}
@@ -112,21 +251,112 @@ def get_pending_feedback():
     except Exception as e:
         return {"error": str(e)}
 
+@app.post("/api/curadoria/auto-tag-batch")
+async def auto_tag_batch(_admin: str = Depends(verify_admin)):
+    """
+    Percorre todos os registros da fila feedback sem predicted_classes (ex: Resgate Nuvem),
+    busca a imagem Cloudinary, roda o ONNX e grava a predição top-3 na tabela.
+    Isso prepara a fila para curadoria manual com sugestão de classe já visível.
+    """
+    lazy_load_model()
+    if not ort_session or not vocab:
+        return {"error": "Modelo ONNX não carregado. Verifique o Render Disk."}
+
+    db_url = get_database_url()
+    if not db_url:
+        return {"error": "Database URL não encontrada."}
+
+    import json as _json
+    import numpy as np
+
+    try:
+        conn = psycopg2.connect(db_url, sslmode='require')
+        cur = conn.cursor()
+
+        # Seleciona itens sem predicted_classes ou com string vazia / '""'
+        cur.execute("""
+            SELECT id, feedback_image_url FROM feedback
+            WHERE predicted_classes IS NULL
+               OR predicted_classes = ''
+               OR predicted_classes = '""'
+               OR predicted_classes = 'null'
+            ORDER BY id DESC
+            LIMIT 200
+        """)
+        rows = cur.fetchall()
+
+        if not rows:
+            cur.close()
+            conn.close()
+            return {"success": True, "tagged": 0, "message": "Nenhum item sem tag na fila."}
+
+        tagged = 0
+        failed = 0
+
+        for (item_id, img_url) in rows:
+            if not img_url or not img_url.startswith('http'):
+                failed += 1
+                continue
+            try:
+                # Busca imagem do Cloudinary
+                resp = requests.get(img_url, timeout=15)
+                if resp.status_code != 200:
+                    failed += 1
+                    continue
+
+                # Pré-processamento idêntico ao /api/predict
+                img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+                img = img.resize((224, 224), Image.Resampling.BILINEAR)
+                img_arr = np.array(img).astype(np.float32) / 255.0
+                mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+                std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+                img_arr = (img_arr - mean) / std
+                img_arr = np.transpose(img_arr, (2, 0, 1))
+                input_tensor = np.expand_dims(img_arr, axis=0)
+
+                inputs = {ort_session.get_inputs()[0].name: input_tensor}
+                logits = ort_session.run(None, inputs)[0][0]
+                exp_L = np.exp(logits - np.max(logits))
+                probs = exp_L / np.sum(exp_L)
+
+                # Top-3 classes normalizadas (sem acentos, snake_case — padrão backend)
+                preds = sorted(
+                    zip(vocab, probs.tolist()),
+                    key=lambda x: x[1], reverse=True
+                )[:3]
+                top_classes = ' | '.join(
+                    f"{normalize_class_name(str(v))}:{p:.2f}" for v, p in preds
+                )
+
+                cur.execute(
+                    "UPDATE feedback SET predicted_classes = %s WHERE id = %s",
+                    (_json.dumps(top_classes), item_id)
+                )
+                tagged += 1
+
+            except Exception:
+                failed += 1
+                continue
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return {
+            "success": True,
+            "tagged": tagged,
+            "failed": failed,
+            "message": f"{tagged} imagens classificadas pelo modelo. {failed} falhas (URL inválida ou timeout)."
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.post("/api/curadoria/upload-zip")
-async def process_zip_upload(file: UploadFile = File(...)):
+async def process_zip_upload(file: UploadFile = File(...), _admin: str = Depends(verify_admin)):
     import zipfile
     import shutil
-    import time
-    import unicodedata
-    import re
-    
-    def normalize_class_name(name: str) -> str:
-        # Remove acentos
-        n = ''.join(c for c in unicodedata.normalize('NFD', name) if unicodedata.category(c) != 'Mn')
-        # Remove caracteres especiais
-        n = re.sub(r'[^a-zA-Z0-9\s]', '', n)
-        # Normaliza espaços extras e aplica CamelCase (ex: "Otite Media Cronica")
-        return ' '.join(n.split()).title()
 
     if not file.filename.lower().endswith('.zip'):
         return {"error": "Por segurança, a rota de ingestão bulk aceita exclusivamente formato .zip."}
@@ -137,8 +367,8 @@ async def process_zip_upload(file: UploadFile = File(...)):
         f.write(await file.read())
         
     try:
-        # Aponte fixo para o "Coração" do seu banco de amostras legadas
-        base_dir = r"C:\Users\drdhs\OneDrive\Documentos\APPROTTO\Samples"
+        # Aponte fixo para a raiz mestre de curadoria bruta
+        base_dir = r"C:\Users\drdhs\OneDrive\Documentos\ottoatlas\OTTO_ML_Dataset_Raw"
         processed_count = 0
         new_classes = set()
         
@@ -155,17 +385,16 @@ async def process_zip_upload(file: UploadFile = File(...)):
                     raw_class_name = parts[-2].strip()
                     file_name = parts[-1].strip()
                     
-                    if not file_name: continue # era só uma pasta
+                    if not file_name: continue
                     
-                    # Normaliza o nome da patologia para evitar poluição da Árvore de Pastas
                     class_name = normalize_class_name(raw_class_name)
-                    
                     class_dir = os.path.join(base_dir, class_name)
                     if not os.path.exists(class_dir):
                         os.makedirs(class_dir, exist_ok=True)
                         new_classes.add(class_name)
                     
                     dest_file = os.path.join(class_dir, file_name)
+                    
                     # Estratégia Anti-Colisão (Overwrite protection)
                     if os.path.exists(dest_file):
                         name, ext = os.path.splitext(file_name)
@@ -188,72 +417,441 @@ async def process_zip_upload(file: UploadFile = File(...)):
             os.remove(temp_zip)
         return {"error": f"Falha catastrófica ao processar lote: {str(e)}"}
 
+@app.get("/api/curadoria/classes")
+def get_dynamic_classes():
+    """
+    Rastreia dinamicamente o Vocabulário Oficial do Modelo + Quaisquer Pastas Novas 
+    criadas via Front-End que ainda não foram treinadas. Retorna a lista integral!
+    """
+    raw_dir = r"C:\Users\drdhs\OneDrive\Documentos\ottoatlas\OTTO_ML_Dataset_Raw"
+    train_dir = r"C:\Users\drdhs\OneDrive\Documentos\ottoatlas\OTTO_ML_Dataset\TRAIN"
+    
+    classes = set()
+    global vocab
+    if vocab:
+        classes.update(vocab)
+        
+    if os.path.exists(raw_dir):
+        for d in os.listdir(raw_dir):
+            if os.path.isdir(os.path.join(raw_dir, d)):
+                classes.add(d)
+                
+    if os.path.exists(train_dir):
+        for d in os.listdir(train_dir):
+            if os.path.isdir(os.path.join(train_dir, d)):
+                classes.add(d)
+                
+    return {"classes": sorted(list(classes))}
+
 @app.post("/api/curadoria/approve")
-async def approve_image(payload: dict):
+async def approve_image(payload: dict, _admin: str = Depends(verify_admin)):
     '''
     Recebe imagem da aba de Curadoria, Remove do Banco (marcando como visto),
-    e se aprovada, Baixa do Cloudinary direto pra pasta de Treino e Normaliza.
+    e se aprovada, insere no clinical_cases no NeonDB com tag 'ml_only'.
+    Faz o upload no Cloudinary se a imagem for um path local.
     '''
-    import requests
     import time
-    import unicodedata
-    import re
-    import shutil
+    import json
+    import os
+    import cloudinary.uploader
     
-    def normalize_class_name(name: str) -> str:
-        n = ''.join(c for c in unicodedata.normalize('NFD', name) if unicodedata.category(c) != 'Mn')
-        n = re.sub(r'[^a-zA-Z0-9\s]', '', n)
-        return ' '.join(n.split()).title()
-        
     try:
         record_id = payload.get("id")
         image_url = payload.get("image_url")
         class_name = payload.get("class_name")
         is_trash = payload.get("is_trash", False)
-        
-        # 1. Apagar da fila de Pendentes no PostgreSQL Legado
+        destination_tier = payload.get("destination_tier", "pure_ml")  # 'atlas', 'quiz', ou 'pure_ml'
+
         db_url = get_database_url()
-        if db_url and record_id:
-            conn = psycopg2.connect(db_url, sslmode='require')
-            cur = conn.cursor()
-            # Deletamos pra não poluir mais a caixa de entrada da curadoria
-            cur.execute("DELETE FROM feedback WHERE id = %s", (record_id,))
-            conn.commit()
+        if not db_url or not record_id:
+            return {"error": "Falta DB_URL ou Record ID."}
+
+        conn = psycopg2.connect(db_url, sslmode='require')
+        cur = conn.cursor()
+
+        # 1. Ler predicted_classes ANTES de deletar (para detectar correção do modelo)
+        was_model_corrected = False
+        cur.execute("SELECT predicted_classes FROM feedback WHERE id = %s", (record_id,))
+        row = cur.fetchone()
+        if row and not is_trash and class_name:
+            raw_predicted = row[0] or ''
+            try:
+                import json as _json
+                predicted_str = _json.loads(raw_predicted) if raw_predicted else ''
+            except Exception:
+                predicted_str = str(raw_predicted)
+            # Extrai top-1 predição (pode vir como "otite_media_aguda | ..." ou só a classe)
+            top_predicted = str(predicted_str).split('|')[0].split(',')[0].strip().lower()
+            normalized_curator = normalize_class_name(class_name)
+            normalized_predicted = normalize_class_name(top_predicted) if top_predicted else ''
+            # Se curador escolheu classe diferente do modelo → candidato a retreino
+            if normalized_predicted and normalized_curator != normalized_predicted:
+                was_model_corrected = True
+
+        # 2. Apagar da fila de Pendentes
+        cur.execute("DELETE FROM feedback WHERE id = %s", (record_id,))
+        conn.commit()
+
+        if is_trash:
             cur.close()
             conn.close()
-            
-        if is_trash:
-            return {"success": "Caso Lixo descartado da base."}
-            
-        # 2. Se Aprovado: Fazer Download físico do Cloudinary para o Cérebro OU mover arquivo Local
-        norm_class = normalize_class_name(class_name) if class_name else "Unknown"
-        base_dir = r"C:\Users\drdhs\OneDrive\Documentos\APPROTTO\Samples"
-        class_dir = os.path.join(base_dir, norm_class)
-        os.makedirs(class_dir, exist_ok=True)
-        
-        if image_url.startswith("/"):
-            # É um arquivo local gerado pelo auto_tagger.py
+            return {"success": "Caso descartado da fila."}
+
+        # 3. Normalizar classe para armazenamento (sem acentos, snake_case)
+        normalized_class = normalize_class_name(class_name) if class_name else "sem_diagnostico"
+        # Display title: apenas para o campo title da UI (o backend sempre armazena normalizado)
+        display_title = normalized_class.replace('_', ' ').title()
+
+        # 4. Checar a media — upar se for path local
+        final_url = image_url
+        if image_url and image_url.startswith("/"):
+            import cloudinary.uploader
+            import uuid
             src_file = os.path.join(os.path.dirname(__file__), "..", "public", image_url.lstrip("/"))
             if os.path.exists(src_file):
-                dest_file = os.path.join(class_dir, f"curada_local_{int(time.time()*1000)}.jpg")
-                shutil.copy2(src_file, dest_file)
+                new_name = f"loteML_{uuid.uuid4().hex[:8]}"
+                res = cloudinary.uploader.upload(
+                    src_file, folder="curadoria_gen4",
+                    public_id=new_name, resource_type="image"
+                )
+                final_url = res.get("secure_url")
+                if not final_url:
+                    cur.close()
+                    conn.close()
+                    return {"error": "Falha upload Cloudinary do repositório local."}
                 try:
-                    os.remove(src_file) # Limpa a caixa de entrada
-                except:
+                    os.remove(src_file)
+                except Exception:
                     pass
-                return {"success": f"Local Imagem salva no Acervo: {norm_class}"}
             else:
-                return {"error": "A imagem local não foi encontrada no disco."}
-        else:
-            # É uma URL oficial do Cloudinary
-            response = requests.get(image_url)
-            if response.status_code == 200:
-                dest_file = os.path.join(class_dir, f"curada_{int(time.time()*1000)}.jpg")
-                with open(dest_file, "wb") as f:
-                    f.write(response.content)
-                return {"success": f"Cloud Imagem salva no Acervo: {norm_class}"}
-            else:
-                return {"error": "Falha ao baixar do Cloudinary."}
-            
+                cur.close()
+                conn.close()
+                return {"error": "Arquivo local ausente na fila física."}
+
+        # 5. Montar taxonomies — inclui retrain_candidate se o modelo errou
+        import json
+        taxonomies_arr = []
+        if destination_tier == "pure_ml":
+            taxonomies_arr = ["pure_ml"]
+        elif destination_tier == "quiz":
+            taxonomies_arr = ["quiz_only"]
+        # Acervo (atlas) não recebe taxonomy → fica visível no album público
+        if was_model_corrected:
+            taxonomies_arr.append("retrain_candidate")
+
+        # 6. Inserir no clinical_cases
+        cur.execute("""
+            INSERT INTO clinical_cases
+            (title, clinical_history, primary_diagnosis, taxonomies, media_urls, svg_json)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (
+            display_title,
+            "Validado por Curadoria Assistida (MLOps). Revisão pelo Especialista pendente.",
+            normalized_class,
+            json.dumps(taxonomies_arr),
+            json.dumps([final_url]),
+            "[]"
+        ))
+
+        new_case_id = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        msg = f"Caso #{new_case_id} salvo como '{normalized_class}'."
+        if was_model_corrected:
+            msg += " Marcado como retrain_candidate (modelo corrigido pelo curador)."
+        return {"success": msg, "case_id": new_case_id, "was_model_corrected": was_model_corrected}
+
     except Exception as e:
+        return {"error": str(e)}
+
+from fastapi import Request
+from typing import List, Optional
+
+@app.post("/api/curadoria/donate")
+async def donate_image(request: Request):
+    form = await request.form()
+    files = form.getlist("files")
+    if not files:
+        # Fallback agressivo para clientes com cache antigo rodando offline via SW
+        files = form.getlist("file")
+        
+    diagnostic = form.get("diagnostic", "Desconhecido")
+    clinical_case = form.get("clinical_case", "")
+    
+    if not files:
+        return {"error": "Nenhum arquivo de imagem foi enviado ou reconhecido pelo servidor."}
+    if not setup_cloudinary():
+        return {"error": "Credenciais do Cloudinary malformadas."}
+        
+    db_url = get_database_url()
+    
+    if not db_url:
+        return {"error": "Banco de Dados não configurado no Servidor."}
+        
+    try:
+        conn = psycopg2.connect(db_url, sslmode='require')
+        cur = conn.cursor()
+        import json
+        import cloudinary.uploader
+        
+        uploaded_urls = []
+        for file in files:
+            contents = await file.read()
+            
+            upload_result = cloudinary.uploader.upload(
+                contents,
+                folder="otoscopia_colaboracao_externa",
+                resource_type="image"
+            )
+            
+            secure_url = upload_result.get("secure_url")
+            if not secure_url:
+                continue
+                
+            uploaded_urls.append(secure_url)
+            case_info = f"[DOAÇÃO COMUNITÁRIA LOTE] {clinical_case}".strip()
+            
+            insert_query = """
+            INSERT INTO feedback (feedback_image_url, correct_diagnosis, diagnosis_correct, predicted_classes, clinical_case)
+            VALUES (%s, %s, %s, %s, %s)
+            """
+            cur.execute(insert_query, (secure_url, diagnostic, True, json.dumps(""), case_info))
+            
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        return {"success": True, "urls": uploaded_urls, "message": f"{len(uploaded_urls)} Imagens recebidas na nuvem com sucesso!"}
+        
+    except Exception as e:
+        return {"error": f"Erro interno da rota Donate: {str(e)}"}
+
+@app.post("/api/curadoria/feedback")
+@app.post("/api/feedback")
+async def feedback_image(request: Request):
+    """
+    Ponto de entrada nativo central pra as predições do OTOSCOP-IA! 
+    Substitui integralmente o antigo Backend do Heroku.
+    """
+    form = await request.form()
+    feedbackImage = form.get("feedbackImage")
+    correctDiagnosis = form.get("correctDiagnosis", "")
+    diagnosisCorrect = form.get("diagnosisCorrect", "yes")
+    predictedClasses = form.get("predictedClasses", "")
+    differentialDiagnosis = form.get("differentialDiagnosis", "")
+    clinicalCase = form.get("clinicalCase", "")
+    
+    if not feedbackImage:
+        return {"error": "Imagem de feedback ausente na carga."}
+    if not setup_cloudinary():
+        return {"error": "Servidor não possui as variáveis Cloudinary ativadas ou estão mal formatadas."}
+        
+    db_url = get_database_url()
+    
+    if not db_url:
+        return {"error": "Servidor não possui NeonDB ativadas."}
+        
+    try:
+        contents = await feedbackImage.read()
+        
+        # Upload para o Cloudinary Native (REST API Bypass Windows DLLs)
+        secure_url = upload_to_cloudinary_rest(contents, "otoscopia_curadoria_pendente")
+        
+        if not secure_url:
+            return {"error": "Falha de comunicação Cloudinary API"}
+            
+        # Conexão NeonDB e Ingestão
+        conn = psycopg2.connect(db_url, sslmode='require')
+        cur = conn.cursor()
+        
+        import json
+        
+        insert_query = """
+        INSERT INTO feedback (feedback_image_url, correct_diagnosis, diagnosis_correct, predicted_classes, clinical_case)
+        VALUES (%s, %s, %s, %s, %s)
+        """
+        
+        # Consolida Diferenciais na coluna original de Predicted Classes pro Vercel renderizar lindamente 
+        final_predictions = predictedClasses
+        if differentialDiagnosis:
+            final_predictions += f" | {differentialDiagnosis}"
+            
+        cur.execute(insert_query, (secure_url, correctDiagnosis, diagnosisCorrect, json.dumps(final_predictions), clinicalCase))
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        return {"success": True}
+        
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return {"error": f"Internal FastAPI feedback exception: {str(e)}"}
+
+# -------------------------------------------------------------
+# GEN 3.0: ATLAS CMS - ROTAS DE DADOS NUVEM DO FRONTEND
+# O frontend busca e envia novos casos direto para Nuvem(Sem estourar o limite de 500MB do Github)
+# -------------------------------------------------------------
+
+@app.get("/api/atlas")
+async def get_atlas_cloud_items():
+    db_url = get_database_url()
+    if not db_url:
+        return {"error": "Banco de Dados indisponível"}
+
+    try:
+        conn = psycopg2.connect(db_url, sslmode='require')
+        cur = conn.cursor()
+        cur.execute("SELECT id, pathology, description, image_url, svg_json FROM atlas_cloud_items WHERE is_deleted = FALSE ORDER BY created_at DESC")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        items = []
+        for r in rows:
+            items.append({
+                "id": str(r[0]),
+                "pathology": r[1] or "",
+                "description": r[2] or "",
+                "image_url": r[3] or "",
+                "svg_json": r[4] or ""
+            })
+        return {"success": True, "items": items}
+
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return {"error": str(e)}
+
+
+@app.post("/api/admin/atlas")
+async def create_atlas_cloud_item(request: Request, _admin: str = Depends(verify_admin)):
+    form = await request.form()
+    file = form.get("file")
+    pathology = form.get("pathology", "Sem Patologia")
+    description = form.get("description", "Sem descrição")
+    svg_json = form.get("svg_json", "[]")
+
+    if not file:
+        return {"error": "Arquivo não encontado no POST form."}
+    if not setup_cloudinary():
+        return {"error": "Credenciais do Cloudinary malformadas ou indisponíveis."}
+
+    db_url = get_database_url()
+    if not db_url:
+        return {"error": "DATABASE_URL do Neon não localizada."}
+
+    try:
+        import cloudinary.uploader
+        contents = await file.read()
+
+        upload_result = cloudinary.uploader.upload(
+            contents,
+            folder="otoscopia_atlas_nuvem",
+            resource_type="image"
+        )
+        secure_url = upload_result.get("secure_url")
+        if not secure_url:
+            return {"error": "Falha silenciosa do Cloudinary - Não gerou URL."}
+
+        conn = psycopg2.connect(db_url, sslmode='require')
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO atlas_cloud_items (pathology, description, image_url, svg_json) VALUES (%s, %s, %s, %s)",
+            (pathology, description, secure_url, svg_json)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"success": True, "url": secure_url, "message": "Atlas Cloud Atualizado!"}
+
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return {"error": str(e)}
+
+
+# -------------------------------------------------------------
+# GEN 3.0: LIXEIRA ADMINISTRATIVA E SOFT DELETE
+# -------------------------------------------------------------
+
+@app.get("/api/admin/atlas/trash")
+async def get_atlas_trash(_admin: str = Depends(verify_admin)):
+    db_url = get_database_url()
+    if not db_url: return {"error": "Banco indisponivel"}
+    try:
+        conn = psycopg2.connect(db_url, sslmode='require')
+        cur = conn.cursor()
+        cur.execute("SELECT id, pathology, description, image_url, svg_json FROM atlas_cloud_items WHERE is_deleted = TRUE ORDER BY created_at DESC LIMIT 5")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        items = []
+        for r in rows:
+            items.append({
+                "id": str(r[0]),
+                "pathology": r[1] or "",
+                "description": r[2] or "",
+                "image_url": r[3] or "",
+                "svg_json": r[4] or ""
+            })
+        return {"success": True, "items": items}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.delete("/api/admin/atlas/{item_id}")
+async def soft_delete_atlas_item(item_id: int, _admin: str = Depends(verify_admin)):
+    db_url = get_database_url()
+    if not db_url: return {"error": "Banco indisponivel"}
+    try:
+        conn = psycopg2.connect(db_url, sslmode='require')
+        cur = conn.cursor()
+        cur.execute("UPDATE atlas_cloud_items SET is_deleted = TRUE WHERE id = %s", (item_id,))
+        if cur.rowcount == 0:
+            return {"error": "Item não encontrado"}
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"success": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/admin/atlas/{item_id}/restore")
+async def restore_atlas_item(item_id: int, _admin: str = Depends(verify_admin)):
+    db_url = get_database_url()
+    if not db_url: return {"error": "Banco indisponivel"}
+    try:
+        conn = psycopg2.connect(db_url, sslmode='require')
+        cur = conn.cursor()
+        cur.execute("UPDATE atlas_cloud_items SET is_deleted = FALSE WHERE id = %s", (item_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"success": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/admin/atlas/{item_id}/svg")
+async def update_atlas_svg(item_id: int, request: Request, _admin: str = Depends(verify_admin)):
+    db_url = get_database_url()
+    if not db_url: return {"error": "Banco indisponivel"}
+    try:
+        form = await request.form()
+        svg_json = form.get("svg_json", "[]")
+        conn = psycopg2.connect(db_url, sslmode='require')
+        cur = conn.cursor()
+        cur.execute("UPDATE atlas_cloud_items SET svg_json = %s WHERE id = %s", (svg_json, item_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"success": True}
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
         return {"error": str(e)}

@@ -1,0 +1,47 @@
+
+--- Analisando: C:\Users\drdhs\OneDrive\Documentos\ottoatlas\OTTO_ML_Dataset ---
+Total na pasta principal: 0 imagens
+
+--- Analisando: C:\Users\drdhs\OneDrive\Documentos\APPROTTO\PORTFOLIO_OFICIAL_ML ---
+[TEST\Corpo Estranho] -> 1 imagens
+[TEST\nao_otoscopica] -> 8 imagens
+[TEST\Normal] -> 2 imagens
+[TEST\Normal 1000] -> 1 imagens
+[TEST\Normal-samples] -> 8 imagens
+[TEST\Obstrucao Auditiva] -> 1 imagens
+[TEST\Obstrução Auditiva-samples] -> 8 imagens
+[TEST\Otite Externa] -> 1 imagens
+[TEST\Otite Externa Aguda] -> 1 imagens
+[TEST\Otite Externa Aguda Difusa] -> 1 imagens
+[TEST\Otite Externa-samples] -> 8 imagens
+[TEST\Otite Media Aguda] -> 1 imagens
+[TEST\Otite Media Aguda Bacteriana 970] -> 1 imagens
+[TEST\Otite Media Cronica] -> 2 imagens
+[TEST\Otite Media Serosa] -> 1 imagens
+[TEST\Otite Média Aguda-samples] -> 8 imagens
+[TEST\Otite Média Crônica-samples] -> 7 imagens
+[TRAIN\nao_otoscopica] -> 49 imagens
+[TRAIN\Normal] -> 5 imagens
+[TRAIN\Normal 1000] -> 1 imagens
+[TRAIN\Normal-samples] -> 49 imagens
+[TRAIN\Obstrucao Auditiva] -> 1 imagens
+[TRAIN\Obstrução Auditiva-samples] -> 49 imagens
+[TRAIN\Otite Externa-samples] -> 49 imagens
+[TRAIN\Otite Media Aguda] -> 4 imagens
+[TRAIN\Otite Media Cronica] -> 2 imagens
+[TRAIN\Otite Media Serosa] -> 2 imagens
+[TRAIN\Otite Média Aguda-samples] -> 49 imagens
+[TRAIN\Otite Média Crônica-samples] -> 46 imagens
+[VALIDATION\nao_otoscopica] -> 14 imagens
+[VALIDATION\Normal] -> 1 imagens
+[VALIDATION\Normal-samples] -> 14 imagens
+[VALIDATION\Obstrução Auditiva-samples] -> 14 imagens
+[VALIDATION\Otite Externa-samples] -> 14 imagens
+[VALIDATION\Otite Media Aguda] -> 1 imagens
+[VALIDATION\Otite Média Aguda-samples] -> 14 imagens
+[VALIDATION\Otite Média Crônica-samples] -> 13 imagens
+Total na pasta principal: 451 imagens
+
+--- Analisando: C:\Users\drdhs\OneDrive\Imagens\Otoscopio 2026\IMG ---
+[RAIZ] -> 1187 imagens
+Total na pasta principal: 1187 imagens

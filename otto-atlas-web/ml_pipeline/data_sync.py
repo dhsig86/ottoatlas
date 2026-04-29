@@ -23,6 +23,10 @@ TAG_MAP = {
     'omc': 'Otite Média Crônica-samples',
     'cronica': 'Otite Média Crônica-samples',
     'perfuração': 'Otite Média Crônica-samples',
+    'otite_media_aguda': 'Otite Media Aguda-samples',
+    'otite_media_cronica': 'Otite Media Cronica-samples',
+    'cerume_obstrucao': 'Obstrução Auditiva-samples',
+    'corpo_estranho': 'Corpo Estranho-samples',
     'pele': 'nao_otoscopica',
     'rost': 'nao_otoscopica'
 }
@@ -69,8 +73,8 @@ if __name__ == '__main__':
     # Onde você (usuário) jogou as fotos soltas do seu Whatsapp:
     INBOX = r"C:\Users\drdhs\OneDrive\Documentos\ottoatlas\inbox_fotos_novas"
     
-    # O banco do Machine Learning (leitura principal)
-    SAMPLES_DB = r"C:\Users\drdhs\OneDrive\Documentos\APPROTTO\Samples"
+    print("====== Sincronização Heroku -> Cloudinary (+ Downloader) ======")
+    SAMPLES_DB = r"C:\Users\drdhs\OneDrive\Documentos\ottoatlas\OTTO_ML_Dataset_Raw"
     
     # Deixamos copy_only=True para NUNCA apagar os arquivos originais do médico
     auto_tag_and_sync(INBOX, SAMPLES_DB, copy_only=True)

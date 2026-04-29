@@ -1,125 +1,63 @@
 import { useState, useEffect } from 'react';
 import { AtlasItem, SvgHotspot } from '../data/mockData';
-import { X, Eye, EyeOff, Lock } from 'lucide-react';
+import { X, Eye, EyeOff, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface Props {
   item: AtlasItem;
   onClose: () => void;
+  onNext?: () => void;
+  onPrev?: () => void;
 }
 
-export function ImageDetailModal({ item, onClose }: Props) {
+export function ImageDetailModal({ item, onClose, onNext, onPrev }: Props) {
   const [currentImageIdx, setCurrentImageIdx] = useState(0);
   const [showHotspots, setShowHotspots] = useState(true);
   const [hoveredHotspot, setHoveredHotspot] = useState<SvgHotspot | null>(null);
-
-  // Mapeamento Autorativo Controlado
-  const [isAdminMode, setIsAdminMode] = useState(false);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [currentPathPoints, setCurrentPathPoints] = useState<string[]>([]);
-  const [drawnHotspots, setDrawnHotspots] = useState<SvgHotspot[]>([]);
-
-  // Toda vez que muda a foto no carrossel, limpar desenhos temporários da foto antiga
+  const [svgViewBox, setSvgViewBox] = useState("0 0 1024 1024");
+  
+  // Limpa o estado residual ao navegar para o lado
   useEffect(() => {
-    setDrawnHotspots([]);
-    setIsDrawing(false);
-    setCurrentPathPoints([]);
+     setCurrentImageIdx(0);
+     setHoveredHotspot(null);
+  }, [item.id]);
+
+  useEffect(() => {
+    setHoveredHotspot(null);
   }, [currentImageIdx]);
 
-  // Restringe a visualização do Mapeamento Anatômico ao Índice da Foto atual para permitir edição flexível.
   const loadedHotspots = (item.hotspots && item.hotspots[currentImageIdx]) ? item.hotspots[currentImageIdx] : [];
-  const allHotspots = [...loadedHotspots, ...drawnHotspots];
-  const hasHotspots = allHotspots.length > 0;
-
-  const currentPathStr = currentPathPoints.length > 0  
-    ? `M ${currentPathPoints[0]} ` + currentPathPoints.slice(1).map(p => `L ${p}`).join(' ') 
-    : '';
-
-  const getMouseCoords = (evt: React.MouseEvent<SVGSVGElement>) => {
-    const svg = evt.currentTarget;
-    const pt = svg.createSVGPoint();
-    pt.x = evt.clientX;
-    pt.y = evt.clientY;
-    const ctm = svg.getScreenCTM();
-    if (!ctm) return { x: 0, y: 0 };
-    const loc = pt.matrixTransform(ctm.inverse());
-    return { x: Math.round(loc.x), y: Math.round(loc.y) };
-  };
-
-  const handleSvgClick = (evt: React.MouseEvent<SVGSVGElement>) => {
-    if (!isAdminMode || !isDrawing) return;
-    const { x, y } = getMouseCoords(evt);
-    setCurrentPathPoints(prev => [...prev, `${x},${y}`]);
-  };
+  const hasHotspots = loadedHotspots.length > 0;
 
   return (
     <div 
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm"
       onClick={onClose}
     >
+      {/* Botões Navegação */}
+      {onPrev && (
+        <button 
+          onClick={(e) => { e.stopPropagation(); onPrev(); }} 
+          className="absolute left-2 md:left-6 top-1/2 -translate-y-1/2 p-2 md:p-3 bg-white/10 hover:bg-white/30 backdrop-blur-md rounded-full text-white z-50 shadow-lg border border-white/20 transition-all hover:scale-110"
+        >
+          <ChevronLeft className="w-8 h-8 md:w-10 md:h-10" />
+        </button>
+      )}
+
+      {onNext && (
+        <button 
+          onClick={(e) => { e.stopPropagation(); onNext(); }} 
+          className="absolute right-2 md:right-6 top-1/2 -translate-y-1/2 p-2 md:p-3 bg-white/10 hover:bg-white/30 backdrop-blur-md rounded-full text-white z-50 shadow-lg border border-white/20 transition-all hover:scale-110"
+        >
+          <ChevronRight className="w-8 h-8 md:w-10 md:h-10" />
+        </button>
+      )}
+
       <div 
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden relative"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden relative animate-in zoom-in-95"
         onClick={e => e.stopPropagation()}
       >
-        {/* Admin Secret Lock Button */}
-        <div className="absolute top-4 left-4 z-30 flex gap-2">
-          {!isAdminMode ? (
-            <button 
-              onClick={() => {
-                const pass = prompt("Código MLOps de Autoria:");
-                if (pass === "020786da") setIsAdminMode(true);
-              }}
-              className="bg-slate-900/50 hover:bg-slate-900 text-white/50 hover:text-white p-2 rounded-full transition-all border outline-none"
-              title="Desbloquear Edição Gráfica"
-            >
-              <Lock className="w-4 h-4" />
-            </button>
-          ) : (
-            <div className="flex bg-slate-900 p-2 rounded-lg gap-2 shadow-lg items-center text-white">
-              <span className="text-xs font-bold leading-none pr-2 border-r border-slate-700">Studio SVG</span>
-              
-              {!isDrawing ? (
-                <button 
-                  onClick={() => setIsDrawing(true)} 
-                  className="px-3 py-1 bg-brand-500 hover:bg-brand-400 text-white rounded text-xs font-bold transition-colors"
-                >
-                  Novo Polígono
-                </button>
-              ) : (
-                <button 
-                  onClick={() => {
-                    const finalPath = currentPathStr + " Z";
-                    const label = prompt("Pato-Anatomia Focada (ex: Cone de Luz):");
-                    if (label) {
-                       const newS = { id: `spot_${Date.now()}`, label, path: finalPath };
-                       setDrawnHotspots(prev => [...prev, newS]);
-                    }
-                    setIsDrawing(false);
-                    setCurrentPathPoints([]);
-                  }} 
-                  className="px-3 py-1 bg-green-500 hover:bg-green-400 text-white rounded text-xs font-bold transition-colors"
-                >
-                  Fechar Desenho
-                </button>
-              )}
-
-              {drawnHotspots.length > 0 && (
-                <button 
-                  onClick={() => {
-                     const codigo = JSON.stringify(drawnHotspots, null, 2);
-                     navigator.clipboard.writeText(codigo);
-                     alert("Código SVG Vetorial Copiado! Cole no chat do Assistente AI.");
-                  }} 
-                  className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-bold transition-colors"
-                >
-                  Copiar Código Export
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
         <div className="absolute top-4 right-4 flex items-center gap-2 z-30">
-          {(hasHotspots || drawnHotspots.length > 0) && (
+          {hasHotspots && (
             <button 
               onClick={() => setShowHotspots(!showHotspots)}
               title={showHotspots ? "Ocultar Estruturas" : "Mostrar Estruturas"}
@@ -128,6 +66,7 @@ export function ImageDetailModal({ item, onClose }: Props) {
               {showHotspots ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
             </button>
           )}
+
           <button 
             onClick={onClose}
             className="bg-white hover:bg-slate-100 text-slate-800 p-2 rounded-full shadow-md transition-colors border"
@@ -136,14 +75,19 @@ export function ImageDetailModal({ item, onClose }: Props) {
           </button>
         </div>
         
-        {/* Contêiner Quadrado para amarrar estruturalmente o SVG à Foto e evitar distorções no zoom */}
-        <div className={`w-full aspect-square max-h-[70vh] bg-black relative flex items-center justify-center overflow-hidden rounded-t-2xl ${isDrawing ? 'ring-4 ring-inset ring-brand-500' : ''}`}>
-            {/* Lente Circular Nativa do Otoscópio Expandida (Menos Zoom Artificial) */}
+        {/* Contêiner Quadrado Fotografia */}
+        <div className="w-full aspect-square max-h-[70vh] bg-black relative flex items-center justify-center overflow-hidden rounded-t-2xl">
             <div className="absolute inset-0 z-10 w-full h-full flex items-center justify-center p-1 md:p-2">
               <img 
                 src={item.images[currentImageIdx]} 
                 alt={`${item.pathology} - Image ${currentImageIdx + 1}`} 
                 className="w-full h-full object-contain" 
+                onLoad={(e) => {
+                   const img = e.target as HTMLImageElement;
+                   if (img.naturalWidth && img.naturalHeight) {
+                      setSvgViewBox(`0 0 ${img.naturalWidth} ${img.naturalHeight}`);
+                   }
+                }}
                 style={{
                   maskImage: "radial-gradient(circle at center, black 80%, transparent 95%)",
                   WebkitMaskImage: "radial-gradient(circle at center, black 80%, transparent 95%)"
@@ -165,50 +109,47 @@ export function ImageDetailModal({ item, onClose }: Props) {
                <span className="loader mb-2">Processando Fotografia...</span>
             </span>
 
-            {/* O SVG Overlay fica perfeitamente colado na imagem via aspect-square bind */}
-           {(hasHotspots || isDrawing) && showHotspots && (
+            {hasHotspots && showHotspots && (
               <svg 
-                viewBox="0 0 1024 1024" 
+                viewBox={svgViewBox} 
                 preserveAspectRatio="xMidYMid meet"
-                className={`absolute inset-0 w-full h-full z-20 ${isDrawing ? 'cursor-crosshair pointer-events-auto' : 'pointer-events-none'}`}
-                onClick={handleSvgClick}
+                className="absolute inset-0 w-full h-full z-20 pointer-events-none"
               >
-                {/* Geometrias Existentes ou Recém-criadas na Sessão */}
-                {allHotspots.map((spot) => (
-                  <g key={spot.id} className={!isDrawing ? "pointer-events-auto" : "pointer-events-none"}>
+                {/* Geometrias Existentes (Com suporte nativo às cores do Studio V4) */}
+                {loadedHotspots.map((spot: any) => {
+                  const strokeColor = spot.color || "#ffffff";
+                  return (
+                  <g key={spot.id} className="pointer-events-auto">
                     <path
                       d={spot.path}
-                      className="fill-brand-400/30 stroke-brand-500 stroke-[3] cursor-pointer transition-all hover:fill-brand-500/50"
-                      onMouseEnter={() => setHoveredHotspot(spot)}
-                      onMouseLeave={() => setHoveredHotspot(null)}
+                      strokeLinecap="round" strokeLinejoin="round" fillRule="evenodd"
+                      className="fill-transparent stroke-[2.5] cursor-pointer transition-all drop-shadow-md pb-hover"
+                      style={{ stroke: strokeColor }}
+                      onMouseEnter={(e) => {
+                          setHoveredHotspot(spot);
+                          e.currentTarget.style.fill = strokeColor + '40'; // opacity 40
+                          e.currentTarget.style.strokeWidth = "4";
+                      }}
+                      onMouseLeave={(e) => {
+                          setHoveredHotspot(null);
+                          e.currentTarget.style.fill = 'transparent';
+                          e.currentTarget.style.strokeWidth = "2.5";
+                      }}
                     />
                   </g>
-                ))}
-
-                {/* Traço Sendo Criado */}
-                {isDrawing && currentPathPoints.length > 0 && (
-                  <path 
-                    d={currentPathStr} 
-                    className="fill-transparent stroke-yellow-400 stroke-[4] stroke-dasharray-[8,8]" 
-                  />
-                )}
-                
-                {/* Nós (Vertices) do Rascunho */}
-                {isDrawing && currentPathPoints.map((pt, i) => {
-                  const [x, y] = pt.split(',');
-                  return <circle key={i} cx={x} cy={y} r="8" className="fill-yellow-400" />
-                })}
+                )})}
               </svg>
             )}
 
-            {hoveredHotspot && !isDrawing && (
-              <div className="absolute bottom-4 left-4 z-30 bg-slate-900/90 text-white px-3 py-1.5 rounded-lg text-sm font-medium backdrop-blur shadow-lg animate-in fade-in zoom-in duration-200 border border-brand-500/50">
-                {hoveredHotspot.label}
+            {hoveredHotspot && (
+              <div className="absolute bottom-4 left-4 z-30 bg-slate-900/90 text-white px-4 py-2 rounded-lg text-sm font-bold backdrop-blur shadow-xl animate-in fade-in zoom-in duration-200 border flex items-center gap-3 pointer-events-auto" style={{borderColor: hoveredHotspot.color || '#3b82f6'}}>
+                <div className="w-3 h-3 rounded-full shadow-inner" style={{backgroundColor: hoveredHotspot.color || '#3b82f6'}}></div>
+                <span>{hoveredHotspot.label}</span>
               </div>
             )}
         </div>
 
-        {/* Thumbnails if multiple images exist */}
+        {/* Thumbnails se houverem várias */}
         {item.images.length > 1 && (
           <div className="flex justify-center gap-2 mt-4 px-6 bg-white shrink-0 pb-2 z-30 relative top-[-10px]">
             {item.images.map((img, idx) => (
@@ -240,9 +181,9 @@ export function ImageDetailModal({ item, onClose }: Props) {
         <div className="p-6 bg-white pt-2">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-2xl font-bold text-slate-800">{item.pathology}</h2>
-            {allHotspots.length > 0 && (
+            {hasHotspots && (
               <span className="text-xs font-semibold bg-brand-100 text-brand-600 px-2 flex items-center py-1 rounded-md">
-                Mapa Anatômico Disponível (Exemplo {currentImageIdx + 1})
+                Geometria Diagnóstica Detectada
               </span>
             )}
           </div>
