@@ -57,7 +57,7 @@ export async function signInWithGoogle(): Promise<string> {
 
   _token = await user.getIdToken();
   _adminEmail = user.email;
-  return user.email;
+  return user.email || "";
 }
 
 /** Logout. */

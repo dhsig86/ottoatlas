@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Lock, LogIn, AlertCircle, Loader2 } from "lucide-react";
+import { Lock, AlertCircle, Loader2 } from "lucide-react";
 import { signInWithGoogle } from "../services/adminAuth";
 
 interface Props {
