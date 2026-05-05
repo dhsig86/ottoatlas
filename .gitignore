@@ -1,0 +1,4 @@
+# Vídeos brutos de treinamento — não versionar no git (usar LFS ou storage externo)
+frame_extractor/meus_videos/*.MOV
+frame_extractor/meus_videos/*.mp4
+frame_extractor/meus_videos/*.avi
