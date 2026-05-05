@@ -2,3 +2,10 @@
 frame_extractor/meus_videos/*.MOV
 frame_extractor/meus_videos/*.mp4
 frame_extractor/meus_videos/*.avi
+
+# Variáveis de ambiente — NUNCA commitar
+**/.env
+**/.env.local
+**/.env.*.local
+**/node_modules
+**/dist
