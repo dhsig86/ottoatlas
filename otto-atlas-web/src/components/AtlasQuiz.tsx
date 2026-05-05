@@ -1,6 +1,55 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { quizQuestions as defaultQuiz } from '../data/quizData';
-import { ArrowRight, CheckCircle, XCircle, RotateCcw, Loader2, User, Trophy, Share2, UploadCloud, Map } from 'lucide-react';
+import { ArrowRight, CheckCircle, XCircle, RotateCcw, Loader2, User, Trophy, Share2, UploadCloud, Map, AlertTriangle } from 'lucide-react';
+
+const FETCH_TIMEOUT_MS = 20000; // 20s — se o Render não acordar, usa quiz estático
+
+// Constrói questão de anatomia — retorna null se dados inválidos
+function buildAnatomyQuestion(c: any, parsedSvg: any[]): any | null {
+  try {
+    const targetSpot = parsedSvg[Math.floor(Math.random() * parsedSvg.length)];
+    if (!targetSpot || typeof targetSpot.label !== 'string' || !targetSpot.label) return null;
+    const correct = targetSpot.label;
+    const anatomicalDistractors = [
+      'Cabo do Martelo', 'Umbigo do Tímpano', 'Triângulo Luminoso', 'Parede do Conduto',
+      'Secreção Purulenta', 'Perfuração', 'Pars Flaccida', 'Bigorna', 'Processo Curto',
+      'Bolsa de Retração', 'Eritema Miringite', 'Cerume', 'Hifa Fúngica', 'Corpo Estranho',
+    ].filter(d => d.toLowerCase().trim() !== correct.toLowerCase().trim());
+    const wrongs = anatomicalDistractors.sort(() => 0.5 - Math.random()).slice(0, 3);
+    const options = [correct, ...wrongs].sort(() => 0.5 - Math.random());
+    if (options.length < 2) return null; // guard
+    return {
+      id: c.id, isAnatomyMode: true, targetSpot,
+      clinicalCase: 'Qual é a estrutura anatômica identificada na visualização?',
+      image: c.media_urls[0], options,
+      correctOptionIndex: options.indexOf(correct),
+      explanation: `Achado auditado pelo Colaboratório Gen4: ${correct}.`,
+    };
+  } catch { return null; }
+}
+
+// Constrói questão clínica — retorna null se dados inválidos
+function buildClinicalQuestion(c: any, allDiagnoses: string[]): any | null {
+  try {
+    const correct = (c.primary_diagnosis || c.title || '').trim();
+    if (!correct) return null;
+    const wrongs = allDiagnoses
+      .filter(d => d !== correct)
+      .sort(() => 0.5 - Math.random())
+      .slice(0, 3);
+    const options = [correct, ...wrongs].sort(() => 0.5 - Math.random());
+    if (options.length < 2) return null; // guard
+    return {
+      id: c.id, isAnatomyMode: false,
+      clinicalCase: (c.clinical_history && c.clinical_history.trim().length > 10)
+        ? c.clinical_history
+        : 'Com base na visualização fotográfica, qual o diagnóstico otoscópico mais provável?',
+      image: c.media_urls[0], options,
+      correctOptionIndex: options.indexOf(correct),
+      explanation: `Caso certificado sob a classe: ${correct}.`,
+    };
+  } catch { return null; }
+}
 
 export function AtlasQuiz() {
   const [userName, setUserName] = useState('');
@@ -13,96 +62,88 @@ export function AtlasQuiz() {
   const [isFinished, setIsFinished] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaved, setIsSaved] = useState(false);
-  
+  const [quizError, setQuizError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+
   // Guardamos as resoluções reais de cada imagem para mapeamento SVG
   const [quizImageSizes, setQuizImageSizes] = useState<Record<number, string>>({});
 
   useEffect(() => {
+    mountedRef.current = true;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
     const fetchQuestions = async () => {
       try {
         const apiURL = import.meta.env.VITE_AI_API_URL || 'http://127.0.0.1:8000';
-        const res = await fetch(`${apiURL.replace(/\/$/, '')}/api/cms/cases`);
+        const res = await fetch(`${apiURL.replace(/\/$/, '')}/api/cms/cases`, { signal: controller.signal });
         const data = await res.json();
-        
-        if (data.success && data.cases && data.cases.length >= 4) {
-             const allDiagnoses = Array.from(new Set(data.cases.map((c:any) => c.primary_diagnosis || c.title).filter(Boolean))) as string[];
-             
-             if (allDiagnoses.length >= 4) {
-                 const dynamicQuestions = data.cases
-                     .filter((c:any) => {
-                         const tags = c.taxonomies || [];
-                         if (tags.includes('ml_only') || tags.includes('ia_only') || tags.includes('pure_ml')) return false;
-                         return c.media_urls && c.media_urls.length > 0 && (c.primary_diagnosis || c.title);
-                     })
-                     .sort(() => 0.5 - Math.random()) 
-                     .slice(0, 40)
-                     .map((c: any) => {
-                         let parsedSvg = null;
-                         try {
-                            if(typeof c.svg_json === 'string') {
-                                const p = JSON.parse(c.svg_json);
-                                if(Array.isArray(p) && p.length > 0) parsedSvg = p;
-                            } else if (Array.isArray(c.svg_json) && c.svg_json.length > 0) {
-                                parsedSvg = c.svg_json;
-                            }
-                         } catch(e) {}
 
-                         // Probabilidade de 40% de virar anatomia SE houver SVG mapeado
-                         const isAnatomyMode = parsedSvg ? Math.random() > 0.6 : false; 
-                         
-                         if (isAnatomyMode && parsedSvg) {
-                              const targetSpot = parsedSvg[Math.floor(Math.random() * parsedSvg.length)];
-                              const correct = targetSpot.label;
-                              const anatomicalDistractors = [
-                                 'Cabo do Martelo', 'Umbigo do Tímpano', 'Triângulo Luminoso', 'Parede do Conduto', 
-                                 'Secreção Purulenta', 'Perfuração', 'Pars Flaccida', 'Bigorna', 'Processo Curto', 
-                                 'Bolsa de Retração', 'Eritema Miringite', 'Cerume', 'Hifa Fúngica', 'Corpo Estranho'
-                              ].filter(d => d.toLowerCase().trim() !== correct.toLowerCase().trim());
-                              
-                              const wrongs = anatomicalDistractors.sort(() => 0.5 - Math.random()).slice(0, 3);
-                              const options = [correct, ...wrongs].sort(() => 0.5 - Math.random());
-                              
-                              return {
-                                  id: c.id,
-                                  isAnatomyMode: true,
-                                  targetSpot: targetSpot,
-                                  clinicalCase: `Qual é a estrutura anatômica sublinhada pelo coloborador na visualização fluorescente?`,
-                                  image: c.media_urls[0],
-                                  options: options,
-                                  correctOptionIndex: options.indexOf(correct),
-                                  explanation: `Achado auditado pelo Colaboratório Gen4: ${correct}.`
-                              };
-                         }
+        if (data.success && Array.isArray(data.cases) && data.cases.length >= 4) {
+          const allDiagnoses = Array.from(
+            new Set(data.cases.map((c: any) => (c.primary_diagnosis || c.title || '').trim()).filter(Boolean))
+          ) as string[];
 
-                         const correct = c.primary_diagnosis || c.title;
-                         const wrongs = allDiagnoses.filter(d => d !== correct).sort(() => 0.5 - Math.random()).slice(0, 3);
-                         const options = [correct, ...wrongs].sort(() => 0.5 - Math.random());
-                         return {
-                             id: c.id,
-                             isAnatomyMode: false,
-                             clinicalCase: (c.clinical_history && c.clinical_history.trim().length > 10) 
-                                ? c.clinical_history 
-                                : `Com base na visualização fotográfica estrutural, qual o diagnóstico otoscópico mais provável para este quadro?`,
-                             image: c.media_urls[0],
-                             options: options,
-                             correctOptionIndex: options.indexOf(correct),
-                             explanation: `Caso certificado sob a classe: ${correct}.`
-                         };
-                     });
-                 
-                 if (dynamicQuestions.length > 0) {
-                     setQuestions(dynamicQuestions);
-                     setIsLoading(false);
-                     return;
-                 }
-             }
+          if (allDiagnoses.length >= 4) {
+            const dynamicQuestions = data.cases
+              .filter((c: any) => {
+                const tags = c.taxonomies || [];
+                if (tags.includes('ml_only') || tags.includes('ia_only') || tags.includes('pure_ml')) return false;
+                return Array.isArray(c.media_urls) && c.media_urls.length > 0 && (c.primary_diagnosis || c.title);
+              })
+              .sort(() => 0.5 - Math.random())
+              .slice(0, 40)
+              .map((c: any) => {
+                let parsedSvg: any[] | null = null;
+                try {
+                  if (typeof c.svg_json === 'string') {
+                    const p = JSON.parse(c.svg_json);
+                    if (Array.isArray(p) && p.length > 0) parsedSvg = p;
+                  } else if (Array.isArray(c.svg_json) && c.svg_json.length > 0) {
+                    parsedSvg = c.svg_json;
+                  }
+                } catch { /* ignore */ }
+
+                const tryAnatomy = parsedSvg ? Math.random() > 0.6 : false;
+                if (tryAnatomy && parsedSvg) {
+                  const q = buildAnatomyQuestion(c, parsedSvg);
+                  if (q) return q;
+                }
+                return buildClinicalQuestion(c, allDiagnoses);
+              })
+              .filter((q: any) => q !== null && Array.isArray(q.options) && q.options.length >= 2);
+
+            if (dynamicQuestions.length > 0 && mountedRef.current) {
+              setQuestions(dynamicQuestions);
+              setIsLoading(false);
+              clearTimeout(timer);
+              return;
+            }
+          }
         }
-      } catch(e) { console.error("Erro no Quiz Dinâmico:", e); }
-      
-      setQuestions(defaultQuiz.sort(() => 0.5 - Math.random()));
-      setIsLoading(false);
+      } catch (e: any) {
+        if (e?.name === 'AbortError') {
+          console.info('Quiz: timeout buscando API — usando questões estáticas');
+        } else {
+          console.error('Erro no Quiz Dinâmico:', e);
+          if (mountedRef.current) setQuizError('Acervo dinâmico indisponível — usando banco local.');
+        }
+      }
+
+      if (mountedRef.current) {
+        setQuestions([...defaultQuiz].sort(() => 0.5 - Math.random()));
+        setIsLoading(false);
+      }
+      clearTimeout(timer);
     };
+
     fetchQuestions();
+
+    return () => {
+      mountedRef.current = false;
+      controller.abort();
+      clearTimeout(timer);
+    };
   }, []);
 
   const handleStart = () => {
@@ -155,10 +196,17 @@ export function AtlasQuiz() {
                  <User className="w-8 h-8 text-brand-600" />
               </div>
               <h2 className="text-3xl font-bold text-slate-800 mb-4">Benchmarking Atlas</h2>
-              <p className="text-slate-600 mb-8 leading-relaxed">
+              <p className="text-slate-600 mb-4 leading-relaxed">
                  O Módulo Clínico sorteará diagnósticos estáticos e mapas anatômicos reais via SVG da nossa nuvem para testar sua proficiência.
               </p>
-              
+
+              {quizError && (
+                <div className="mb-4 flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium px-4 py-2 rounded-lg">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  {quizError}
+                </div>
+              )}
+
               <div className="mb-8 text-left">
                   <label className="block text-sm font-bold text-slate-700 mb-2">Identificação do Profissional / Sistema:</label>
                   <input 
@@ -291,7 +339,7 @@ export function AtlasQuiz() {
         <h3 className="text-lg font-black text-slate-800 mb-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
           {question.isAnatomyMode ? 'Identifique a estrutura mapeada:' : 'Selecione o diagnóstico assertivo:'}
         </h3>
-        {question.options.map((option: string, index: number) => {
+        {(question.options ?? []).map((option: string, index: number) => {
           const isSelected = selectedAnswer === index;
           const isCorrect = index === question.correctOptionIndex;
           
