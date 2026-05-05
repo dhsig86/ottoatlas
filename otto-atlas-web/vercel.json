@@ -3,5 +3,24 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install",
-  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- src/ index.html vite.config.ts tsconfig.json package.json .env.production"
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- src/ index.html vite.config.ts tsconfig.json package.json .env.production",
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "frame-ancestors 'self' https://ottopwa.vercel.app https://otto.drdariohart.com https://otto-ecosystem.web.app https://otto-ecosystem.firebaseapp.com https://*.vercel.app"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
+      ]
+    }
+  ]
 }
