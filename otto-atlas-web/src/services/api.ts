@@ -7,6 +7,7 @@
  */
 
 import { compressImage } from '../utils/imageCompressor';
+import { stripExifFromImage } from '../utils/imageUtils';
 
 export interface PredictionResult {
   class: string;
@@ -33,7 +34,8 @@ export function getApiBase(): string {
 export async function predictOtoscopyImage(file: File): Promise<PredictionResult[]> {
   console.log('Enviando imagem otimizada para análise do OTOSCOP-IA...');
 
-  const optimizedFile = await compressImage(file);
+  const safeFile = await stripExifFromImage(file);       // ACT-04: remove EXIF/GPS antes do upload (LGPD)
+  const optimizedFile = await compressImage(safeFile);   // então comprimir pixels limpos
   const formData = new FormData();
   formData.append('file', optimizedFile);
 
