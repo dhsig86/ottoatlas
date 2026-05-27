@@ -128,5 +128,27 @@ export const atlasData: AtlasItem[] = [
       '/images/atlas_v4/cerume_obstrucao_v4_2.jpg'
     ],
     description: 'Elementos alheios ao corpo humano (insetos, algodão, massa de cerume impactada) bloqueando o canal auditivo.'
+  },
+  {
+    id: 'omc_colesteatomatosa',
+    pathology: 'Otite Média Crônica Colesteatomatosa',
+    images: [
+      '/images/atlas_v3/Otite_M_dia_Cr_nica___Colesteatomatosa_1.jpg',
+      '/images/atlas_v3/Otite_M_dia_Cr_nica___Colesteatomatosa_2.jpg',
+      '/images/atlas_v3/Otite_M_dia_Cr_nica___Colesteatomatosa_3.jpg'
+    ],
+    hotspots: [],
+    description: 'Presença de massa esbranquiçada (epitélio escamoso queratinizado) na orelha média, frequentemente associada a retração atical ou perfuração marginal posterossuperior. Risco de erosão ossicular e complicações graves.'
+  },
+  {
+    id: 'oms_serosa',
+    pathology: 'Otite Média Secretora (OMS)',
+    images: [
+      '/images/atlas_v3/Otite_M_dia_Serosa_1.jpg',
+      '/images/atlas_v3/Otite_M_dia_Serosa_2.jpg',
+      '/images/atlas_v3/Otite_M_dia_Serosa_3.jpg'
+    ],
+    hotspots: [],
+    description: 'Efusão serosa ou mucóide na orelha média sem sinais de infecção aguda. Membrana timpânica íntegra, frequentemente com nível líquido, bolhas ou aspecto ambarado. Causa comum de hipoacusia condutiva em crianças.'
   }
 ];
