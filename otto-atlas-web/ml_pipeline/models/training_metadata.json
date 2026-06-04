@@ -1,0 +1,23 @@
+{
+  "trained_at": "2026-06-04T09:03:43.163528",
+  "epochs_requested": 15,
+  "architecture": "resnet18",
+  "classes": [
+    "cerume_obstrucao",
+    "nao_otoscopica",
+    "normal",
+    "otite_externa_aguda",
+    "otite_media_aguda",
+    "otite_media_cronica",
+    "otite_media_serosa",
+    "timpanoesclerose",
+    "tubo_de_ventilacao"
+  ],
+  "n_classes": 9,
+  "train_samples": 537,
+  "valid_samples": 153,
+  "augmentation": {
+    "online": "aug_transforms(max_rotate=360, max_lighting=0.25, max_zoom=1.15, no_warp)",
+    "offline": "minority_balanced_to_80_per_class"
+  }
+}

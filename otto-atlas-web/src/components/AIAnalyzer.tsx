@@ -48,7 +48,7 @@ export function AIAnalyzer() {
     
     // Preparar os diferenciais como string
     const mainClass = predictions[0].class;
-    const diffString = predictions.slice(1).map(p => `${p.class}: ${(p.confidence * 100).toFixed(0)}%`).join(', ');
+    const diffString = predictions.slice(1).map(p => `${p.class}: ${p.confidence.toFixed(0)}%`).join(', ');
 
     try {
       const success = await sendFeedbackToLegacySystem(
@@ -138,24 +138,43 @@ export function AIAnalyzer() {
         <div className="flex flex-col">
           {predictions ? (
             <div className="h-full flex flex-col gap-4">
-              <div className="bg-brand-50 border border-brand-200 p-5 rounded-xl text-center shadow-sm">
-                <span className="block text-brand-600 font-semibold mb-1">Diagnóstico Primário (Top 1)</span>
-                <span className="block text-2xl font-black text-slate-800">{predictions[0].class}</span>
-                <span className="block text-sm text-brand-500 font-medium mt-1">Confiança: {(predictions[0].confidence * 100).toFixed(1)}%</span>
+              <div className="bg-amber-50 border border-amber-200 px-4 py-2.5 rounded-lg text-xs text-amber-800 leading-relaxed">
+                <strong>⚠️ Atenção:</strong> Sugestão baseada exclusivamente na imagem. Não substitui avaliação clínica completa (anamnese, otoscopia dinâmica, exame físico).
+              </div>
+
+              <div className="bg-brand-50 border border-brand-200 p-5 rounded-xl shadow-sm">
+                <span className="block text-brand-600 font-semibold mb-3 text-sm uppercase tracking-wide">
+                  Hipóteses Diagnósticas (Top {predictions.length})
+                </span>
                 
-                {/* Diferenciais */}
-                {predictions.length > 1 && (
-                  <div className="mt-4 pt-4 border-t border-brand-200 flex flex-col gap-2">
-                    <span className="block text-xs font-semibold text-brand-700 uppercase tracking-wide">Diagnósticos Diferenciais</span>
-                    <ul className="text-sm text-slate-600 flex flex-wrap justify-center gap-2">
-                      {predictions.slice(1).map((p, i) => (
-                        <li key={i} className="bg-white px-3 py-1 rounded-full border border-brand-100 shadow-sm">
-                          {p.class} <span className="opacity-70">({(p.confidence * 100).toFixed(0)}%)</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+                <div className="flex flex-col gap-2.5">
+                  {predictions.map((p, i) => {
+                    const isTop = i === 0;
+                    const barColor = isTop ? 'bg-brand-500' : i < 3 ? 'bg-brand-300' : 'bg-slate-300';
+                    const textWeight = isTop ? 'font-bold text-slate-900' : 'font-medium text-slate-700';
+                    const badge = isTop ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`;
+                    
+                    return (
+                      <div key={i} className={`rounded-lg p-3 ${isTop ? 'bg-white border-2 border-brand-300 shadow-sm' : 'bg-white/60 border border-slate-100'}`}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className={`text-sm ${textWeight}`}>
+                            <span className="mr-1.5">{badge}</span>
+                            {p.class}
+                          </span>
+                          <span className={`text-sm font-mono ${isTop ? 'text-brand-600 font-bold' : 'text-slate-500'}`}>
+                            {p.confidence.toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                          <div 
+                            className={`h-full rounded-full transition-all duration-700 ease-out ${barColor}`}
+                            style={{ width: `${Math.min(p.confidence, 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="bg-white border text-left border-slate-200 p-5 rounded-xl shadow-sm flex-1">

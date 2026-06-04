@@ -7,9 +7,13 @@ from fastai.vision.all import load_learner
 import os
 import pathlib
 
-model_path = r'C:\Users\drdhs\OneDrive\Documentos\ottoatlas\otto-atlas-web\ml_pipeline\models\otto_diagnostic_model.pkl'
-onnx_path = r'C:\Users\drdhs\OneDrive\Documentos\ottoatlas\otto-atlas-web\ml_pipeline\models\otto_model.onnx'
-vocab_path = r'C:\Users\drdhs\OneDrive\Documentos\ottoatlas\otto-atlas-web\ml_pipeline\models\vocab.txt'
+# Dynamic path resolution (matches train_model.py pattern)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = os.path.join(SCRIPT_DIR, 'models')
+
+model_path = os.path.join(MODELS_DIR, 'otto_diagnostic_model.pkl')
+onnx_path = os.path.join(MODELS_DIR, 'otto_model.onnx')
+vocab_path = os.path.join(MODELS_DIR, 'vocab.txt')
 
 print("1. Patch de PathLib ativado...")
 temp = pathlib.PosixPath

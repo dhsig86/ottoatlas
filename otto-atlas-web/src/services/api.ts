@@ -63,7 +63,9 @@ export async function predictOtoscopyImage(file: File): Promise<PredictionResult
     const data = await response.json();
     if (data.error) throw new Error(`Erro da IA: ${data.error}`);
 
-    return data as PredictionResult[];
+    // Suporta formato novo (envelope) e legado (array direto)
+    const predictions: PredictionResult[] = Array.isArray(data) ? data : data.predictions;
+    return predictions;
   } catch (error: any) {
     clearTimeout(timeoutId);
     console.error('Erro ao chamar OTOSCOP-IA:', error);

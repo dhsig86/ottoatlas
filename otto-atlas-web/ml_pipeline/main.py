@@ -102,12 +102,18 @@ def upload_to_cloudinary_rest(file_contents, folder):
 
 app = FastAPI(title="OTOSCOP-IA Engine", description="FastAPI Backend for ONNX Runtime")
 
-# Permitir o Frontend React (localhost:5173 e Prod)
+# Permitir o Frontend React (dev + produção + PWA iframe)
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:4173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "https://otto.drdariohart.com",
+    "https://ottopwa.vercel.app",
     "https://ottos-plum.vercel.app",
     "https://atlas.drdariohart.com",
+    "https://otto-ecosystem.web.app",
+    "https://otto-ecosystem.firebaseapp.com",
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -204,14 +210,32 @@ def predict_image(file: UploadFile = File(...)):
         exp_L = np.exp(logits - np.max(logits))
         probs = exp_L / np.sum(exp_L)
         
-        def clean_name(name):
-            return name.replace("-samples", "").replace("_", " ").title() if name.islower() else name.replace("-samples", "").replace("_", " ")
+        # Mapeamento de display: nomes bonitos com acentos para a UI clínica
+        DISPLAY_NAMES = {
+            "cerume_obstrucao":     "Cerume / Obstrução",
+            "nao_otoscopica":       "Não Otoscópica",
+            "normal":               "Normal",
+            "otite_externa_aguda":  "Otite Externa Aguda",
+            "otite_media_aguda":    "Otite Média Aguda",
+            "otite_media_cronica":  "Otite Média Crônica",
+            "otite_media_serosa":   "Otite Média Serosa",
+            "timpanoesclerose":     "Timpanoesclerose",
+            "tubo_de_ventilacao":   "Tubo de Ventilação",
+        }
+        
+        def display_name(raw: str) -> str:
+            key = raw.lower().replace("-samples", "").replace(" ", "_").strip()
+            return DISPLAY_NAMES.get(key, raw.replace("_", " ").title())
         
         # Combina classes com probabilidades e ordena
-        predictions = [{"class": clean_name(str(v)), "confidence": float(p)} for v, p in zip(vocab, probs)]
+        predictions = [{"class": display_name(str(v)), "confidence": round(float(p) * 100, 1)} for v, p in zip(vocab, probs)]
         predictions.sort(key=lambda x: x["confidence"], reverse=True)
         
-        return predictions[:3]
+        return {
+            "predictions": predictions[:5],
+            "disclaimer": "Sugestão baseada exclusivamente na imagem. Não substitui avaliação clínica completa (anamnese, otoscopia dinâmica, exame físico).",
+            "model_version": "v2.0-resnet18"
+        }
         
     except Exception as e:
         import traceback
@@ -835,6 +859,89 @@ async def restore_atlas_item(item_id: int, _admin: str = Depends(verify_admin)):
         return {"success": True}
     except Exception as e:
         return {"error": str(e)}
+
+
+# -------------------------------------------------------------
+# DEPLOY DE MODELO — Upload protegido do ONNX + vocab para disco
+# -------------------------------------------------------------
+
+@app.post("/api/admin/model/upload")
+async def upload_model(
+    request: Request,
+    _admin: str = Depends(verify_admin)
+):
+    """
+    Recebe otto_model.onnx e/ou vocab.txt via multipart form e salva no
+    Render Persistent Disk (/var/data) ou fallback local (models/).
+    Recarrega o modelo na próxima predição.
+    """
+    global ort_session, vocab
+
+    RENDER_DISK_PATH = "/var/data"
+    LOCAL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+    TARGET_DIR = RENDER_DISK_PATH if os.path.isdir(RENDER_DISK_PATH) else LOCAL_PATH
+
+    form = await request.form()
+    saved_files = []
+
+    for field_name in ["onnx_file", "vocab_file"]:
+        file = form.get(field_name)
+        if not file:
+            continue
+
+        filename = "otto_model.onnx" if field_name == "onnx_file" else "vocab.txt"
+        target_path = os.path.join(TARGET_DIR, filename)
+
+        contents = await file.read()
+        with open(target_path, "wb") as f:
+            f.write(contents)
+
+        size_mb = len(contents) / 1024 / 1024
+        saved_files.append(f"{filename} ({size_mb:.1f} MB)")
+
+    if not saved_files:
+        return {"error": "Nenhum arquivo enviado. Use campos 'onnx_file' e/ou 'vocab_file'."}
+
+    # Invalidar modelo carregado para forçar reload na próxima predição
+    ort_session = None
+    vocab = []
+
+    return {
+        "success": True,
+        "target_dir": TARGET_DIR,
+        "files": saved_files,
+        "message": f"Modelo atualizado em {TARGET_DIR}. Próxima predição usará o novo modelo."
+    }
+
+
+@app.get("/api/admin/model/info")
+async def model_info(_admin: str = Depends(verify_admin)):
+    """Retorna info do modelo atualmente deployado."""
+    RENDER_DISK_PATH = "/var/data"
+    LOCAL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+    BASE_DIR = RENDER_DISK_PATH if os.path.isdir(RENDER_DISK_PATH) else LOCAL_PATH
+
+    model_path = os.path.join(BASE_DIR, "otto_model.onnx")
+    vocab_path = os.path.join(BASE_DIR, "vocab.txt")
+    meta_path = os.path.join(BASE_DIR, "training_metadata.json")
+
+    info = {"base_dir": BASE_DIR, "model_exists": os.path.exists(model_path)}
+
+    if os.path.exists(model_path):
+        info["model_size_mb"] = round(os.path.getsize(model_path) / 1024 / 1024, 1)
+
+    if os.path.exists(vocab_path):
+        with open(vocab_path, "r", encoding="utf-8") as f:
+            info["vocab"] = [l.strip() for l in f if l.strip()]
+
+    if os.path.exists(meta_path):
+        import json as _json
+        with open(meta_path, "r", encoding="utf-8") as f:
+            info["metadata"] = _json.load(f)
+
+    info["session_loaded"] = ort_session is not None
+
+    return info
 
 
 @app.post("/api/admin/atlas/{item_id}/svg")

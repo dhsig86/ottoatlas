@@ -57,6 +57,24 @@ function App() {
     }).catch(() => { /* cold start silencioso */ });
   }, []);
 
+  // PWA handshake: responde ao shell OTTO PWA via postMessage
+  useEffect(() => {
+    const handleMessage = (e: MessageEvent) => {
+      if (e.data?.type === 'otto-context') {
+        // Recebeu contexto do PWA (userName, userId, firebaseToken)
+        console.log('[OTTO Atlas] Contexto PWA recebido:', e.data.payload?.userName);
+        // Responde que o módulo está pronto
+        window.parent.postMessage({ type: 'otto-atlas-ready' }, '*');
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    // Envia ready pro-ativamente (caso o PWA já tenha mandado o contexto antes do listener)
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: 'otto-atlas-ready' }, '*');
+    }
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
   const handleAdminLogout = async () => {
     await signOut();
     setAdminEmail(null);
