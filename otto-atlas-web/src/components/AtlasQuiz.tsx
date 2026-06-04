@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { quizQuestions as defaultQuiz } from '../data/quizData';
 import { ArrowRight, CheckCircle, XCircle, RotateCcw, Loader2, User, Trophy, Share2, UploadCloud, Map, AlertTriangle } from 'lucide-react';
+import { getApiBase } from '../services/api';
 
 const FETCH_TIMEOUT_MS = 20000; // 20s — se o Render não acordar, usa quiz estático
 
@@ -54,6 +55,8 @@ function buildClinicalQuestion(c: any, allDiagnoses: string[]): any | null {
 export function AtlasQuiz() {
   const [userName, setUserName] = useState('');
   const [hasStarted, setHasStarted] = useState(false);
+  const [, setQuizMode] = useState<'clinical' | 'anatomy' | null>(null);
+  const [rawCases, setRawCases] = useState<any[]>([]);
   const [questions, setQuestions] = useState<any[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
@@ -75,55 +78,21 @@ export function AtlasQuiz() {
 
     const fetchQuestions = async () => {
       try {
-        const apiURL = import.meta.env.VITE_AI_API_URL || 'http://127.0.0.1:8000';
-        const res = await fetch(`${apiURL.replace(/\/$/, '')}/api/cms/cases`, { signal: controller.signal });
+        const apiBase = getApiBase();
+        const res = await fetch(`${apiBase}/api/cms/cases`, { signal: controller.signal });
         const data = await res.json();
 
-        if (data.success && Array.isArray(data.cases) && data.cases.length >= 4) {
-          const allDiagnoses = Array.from(
-            new Set(data.cases.map((c: any) => (c.primary_diagnosis || c.title || '').trim()).filter(Boolean))
-          ) as string[];
-
-          if (allDiagnoses.length >= 4) {
-            const dynamicQuestions = data.cases
-              .filter((c: any) => {
-                const tags = c.taxonomies || [];
-                if (tags.includes('ml_only') || tags.includes('ia_only') || tags.includes('pure_ml')) return false;
-                return Array.isArray(c.media_urls) && c.media_urls.length > 0 && (c.primary_diagnosis || c.title);
-              })
-              .sort(() => 0.5 - Math.random())
-              .slice(0, 40)
-              .map((c: any) => {
-                let parsedSvg: any[] | null = null;
-                try {
-                  if (typeof c.svg_json === 'string') {
-                    const p = JSON.parse(c.svg_json);
-                    if (Array.isArray(p) && p.length > 0) parsedSvg = p;
-                  } else if (Array.isArray(c.svg_json) && c.svg_json.length > 0) {
-                    parsedSvg = c.svg_json;
-                  }
-                } catch { /* ignore */ }
-
-                const tryAnatomy = parsedSvg ? Math.random() > 0.6 : false;
-                if (tryAnatomy && parsedSvg) {
-                  const q = buildAnatomyQuestion(c, parsedSvg);
-                  if (q) return q;
-                }
-                return buildClinicalQuestion(c, allDiagnoses);
-              })
-              .filter((q: any) => q !== null && Array.isArray(q.options) && q.options.length >= 2);
-
-            if (dynamicQuestions.length > 0 && mountedRef.current) {
-              setQuestions(dynamicQuestions);
+        if (data.success && Array.isArray(data.cases) && data.cases.length > 0) {
+            if (mountedRef.current) {
+              setRawCases(data.cases);
               setIsLoading(false);
               clearTimeout(timer);
               return;
             }
-          }
         }
       } catch (e: any) {
         if (e?.name === 'AbortError') {
-          console.info('Quiz: timeout buscando API — usando questões estáticas');
+          console.info('Quiz: timeout buscando API — usando rawCases estáticos');
         } else {
           console.error('Erro no Quiz Dinâmico:', e);
           if (mountedRef.current) setQuizError('Acervo dinâmico indisponível — usando banco local.');
@@ -131,7 +100,7 @@ export function AtlasQuiz() {
       }
 
       if (mountedRef.current) {
-        setQuestions([...defaultQuiz].sort(() => 0.5 - Math.random()));
+        setRawCases([]); // vai usar o fallback
         setIsLoading(false);
       }
       clearTimeout(timer);
@@ -146,10 +115,58 @@ export function AtlasQuiz() {
     };
   }, []);
 
-  const handleStart = () => {
-     if (userName.trim().length >= 2) {
-         setHasStarted(true);
-     }
+  const handleStartMode = (mode: 'clinical' | 'anatomy') => {
+      if (userName.trim().length < 2) return;
+      setQuizMode(mode);
+      setHasStarted(true);
+
+      const allDiagnoses = Array.from(
+        new Set(rawCases.map((c: any) => (c.primary_diagnosis || c.title || '').trim()).filter(Boolean))
+      ) as string[];
+
+      let dynamicQuestions: any[] = [];
+      
+      if (rawCases.length > 0) {
+         dynamicQuestions = rawCases
+           .filter((c: any) => {
+             const tags = c.taxonomies || [];
+             if (tags.includes('pure_ml') || c.isMlOnly) return false;
+             if (mode === 'clinical') return tags.includes('quiz_clinico') || tags.includes('acervo_publico') || tags.includes('quiz_only');
+             if (mode === 'anatomy') return tags.includes('quiz_anatomico') || (c.svg_json && c.svg_json !== '[]');
+             return false;
+           })
+           .sort(() => 0.5 - Math.random())
+           .slice(0, 40)
+           .map((c: any) => {
+              let parsedSvg: any[] | null = null;
+              try {
+                if (typeof c.svg_json === 'string') {
+                  const p = JSON.parse(c.svg_json);
+                  if (Array.isArray(p) && p.length > 0) parsedSvg = p;
+                } else if (Array.isArray(c.svg_json) && c.svg_json.length > 0) {
+                  parsedSvg = c.svg_json;
+                }
+              } catch { /* ignore */ }
+
+              if (mode === 'anatomy' && parsedSvg) {
+                 return buildAnatomyQuestion(c, parsedSvg);
+              }
+              if (mode === 'clinical') {
+                 return buildClinicalQuestion(c, allDiagnoses);
+              }
+              return null;
+           })
+           .filter((q: any) => q !== null && Array.isArray(q.options) && q.options.length >= 2);
+      }
+
+      if (dynamicQuestions.length > 0) {
+         setQuestions(dynamicQuestions);
+      } else {
+         // Fallback
+         // At the moment, defaultQuiz doesn't have an explicit isAnatomyMode in type, but if it has targetSpot it's anatomy.
+         const fallback = defaultQuiz.filter(q => mode === 'anatomy' ? (q as any).targetSpot : !(q as any).targetSpot);
+         setQuestions(fallback.length > 0 ? fallback.sort(() => 0.5 - Math.random()) : [...defaultQuiz].sort(() => 0.5 - Math.random()));
+      }
   };
 
   const question = questions[currentQuestionIndex];
@@ -219,17 +236,30 @@ export function AtlasQuiz() {
                   <p className="text-xs text-slate-400 mt-2">Dica: Se estiver realizando auditoria logarítmica para o estudo da v4, insira 'OTTOSCOP-IA'.</p>
               </div>
 
-              <button
-                 onClick={handleStart}
-                 disabled={userName.trim().length < 2 || isLoading}
-                 className="w-full bg-brand-600 disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-brand-700 text-white px-6 py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-transform hover:-translate-y-1 shadow-md hover:shadow-xl"
-              >
-                 {isLoading ? (
-                     <><Loader2 className="w-5 h-5 animate-spin" /> Carregando Acervo...</>
-                 ) : (
-                     <><Trophy className="w-5 h-5" /> Iniciar Dual-Mode</>
-                 )}
-              </button>
+              <div className="flex flex-col sm:flex-row gap-3">
+                  <button
+                     onClick={() => handleStartMode('clinical')}
+                     disabled={userName.trim().length < 2 || isLoading}
+                     className="flex-1 bg-brand-600 disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-brand-700 text-white px-4 py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-transform hover:-translate-y-1 shadow-md hover:shadow-xl"
+                  >
+                     {isLoading ? (
+                         <><Loader2 className="w-5 h-5 animate-spin" /> Carregando...</>
+                     ) : (
+                         <><Trophy className="w-5 h-5" /> Quiz Clínico</>
+                     )}
+                  </button>
+                  <button
+                     onClick={() => handleStartMode('anatomy')}
+                     disabled={userName.trim().length < 2 || isLoading}
+                     className="flex-1 bg-emerald-600 disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-emerald-700 text-white px-4 py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-transform hover:-translate-y-1 shadow-md hover:shadow-xl"
+                  >
+                     {isLoading ? (
+                         <><Loader2 className="w-5 h-5 animate-spin" /> Carregando...</>
+                     ) : (
+                         <><Map className="w-5 h-5" /> Quiz Anatômico</>
+                     )}
+                  </button>
+              </div>
           </div>
       );
   }

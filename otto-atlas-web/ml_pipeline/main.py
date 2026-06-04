@@ -867,7 +867,8 @@ async def restore_atlas_item(item_id: int, _admin: str = Depends(verify_admin)):
 
 @app.post("/api/admin/model/upload")
 async def upload_model(
-    request: Request,
+    onnx_file: UploadFile = File(None),
+    vocab_file: UploadFile = File(None),
     _admin: str = Depends(verify_admin)
 ):
     """
@@ -881,26 +882,33 @@ async def upload_model(
     LOCAL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
     TARGET_DIR = RENDER_DISK_PATH if os.path.isdir(RENDER_DISK_PATH) else LOCAL_PATH
 
-    form = await request.form()
     saved_files = []
 
-    for field_name in ["onnx_file", "vocab_file"]:
-        file = form.get(field_name)
-        if not file:
-            continue
-
-        filename = "otto_model.onnx" if field_name == "onnx_file" else "vocab.txt"
-        target_path = os.path.join(TARGET_DIR, filename)
-
-        contents = await file.read()
+    if onnx_file:
+        target_path = os.path.join(TARGET_DIR, "otto_model.onnx")
+        size = 0
         with open(target_path, "wb") as f:
-            f.write(contents)
+            while chunk := await onnx_file.read(8192):
+                f.write(chunk)
+                size += len(chunk)
+        size_mb = size / 1024 / 1024
+        saved_files.append(f"otto_model.onnx ({size_mb:.1f} MB)")
 
-        size_mb = len(contents) / 1024 / 1024
-        saved_files.append(f"{filename} ({size_mb:.1f} MB)")
+    if vocab_file:
+        target_path = os.path.join(TARGET_DIR, "vocab.txt")
+        size = 0
+        with open(target_path, "wb") as f:
+            while chunk := await vocab_file.read(8192):
+                f.write(chunk)
+                size += len(chunk)
+        size_mb = size / 1024 / 1024
+        saved_files.append(f"vocab.txt ({size_mb:.3f} MB)")
 
     if not saved_files:
-        return {"error": "Nenhum arquivo enviado. Use campos 'onnx_file' e/ou 'vocab_file'."}
+        raise HTTPException(
+            status_code=400,
+            detail="Nenhum arquivo enviado. Use campos 'onnx_file' e/ou 'vocab_file'."
+        )
 
     # Invalidar modelo carregado para forçar reload na próxima predição
     ort_session = None

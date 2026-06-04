@@ -8,6 +8,7 @@ import { OtoscopyInstructionsModal } from './components/OtoscopyInstructionsModa
 import { CommunityDonation } from './components/CommunityDonation'
 import { AdminLoginOverlay } from './components/AdminLoginOverlay'
 import { checkExistingSession, signOut } from './services/adminAuth'
+import { getApiBase } from './services/api'
 
 function App() {
   const getInitialTab = () => {
@@ -51,8 +52,8 @@ function App() {
 
   // Warm-up ping: acorda o backend Render antes do usuário interagir
   useEffect(() => {
-    const apiURL = (import.meta.env.VITE_AI_API_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
-    fetch(`${apiURL}/health`, {
+    const apiBase = getApiBase();
+    fetch(`${apiBase}/health`, {
       signal: AbortSignal.timeout ? AbortSignal.timeout(20000) : undefined,
     }).catch(() => { /* cold start silencioso */ });
   }, []);

@@ -26,12 +26,64 @@ META_PATH = os.path.join(MODELS_DIR, "training_metadata.json")
 def get_firebase_token():
     """
     Obtém token Firebase do admin para autenticar a rota protegida.
-    Requer o pacote firebase-admin ou token manual.
+    Tenta gerar automaticamente usando a conta de serviço local, senão pede manual.
     """
-    # Tenta usar token salvo em variável de ambiente
+    # 1. Tenta usar token salvo em variável de ambiente
     token = os.environ.get("FIREBASE_ID_TOKEN")
     if token:
         return token
+    
+    # 2. Tenta gerar via conta de serviço local
+    possible_paths = [
+        "otto-ecosystem-61942d29bdd3.json",
+        "../otto-ecosystem-61942d29bdd3.json",
+        "../../otto-ecosystem-61942d29bdd3.json",
+        "../../../otto-ecosystem-61942d29bdd3.json",
+    ]
+    
+    sa_path = None
+    for path in possible_paths:
+        full_path = os.path.abspath(os.path.join(os.path.dirname(__file__), path))
+        if os.path.exists(full_path):
+            sa_path = full_path
+            break
+            
+    if sa_path:
+        print(f"[AUTH] Encontrada conta de serviço do Firebase: {sa_path}")
+        try:
+            import firebase_admin
+            from firebase_admin import credentials, auth
+            import requests
+            
+            # Inicializa app do Firebase se não estiver inicializado
+            if not firebase_admin._apps:
+                cred = credentials.Certificate(sa_path)
+                firebase_admin.initialize_app(cred)
+                
+            # Cria token customizado com o e-mail do admin no claim
+            print("[AUTH] Gerando token customizado para dr.dhsig@gmail.com...")
+            developer_claims = {"email": "dr.dhsig@gmail.com", "email_verified": True}
+            custom_token = auth.create_custom_token("admin-deployer", developer_claims)
+            
+            # Se for do tipo bytes (Python 3.x antiga ou biblioteca mais recente), decodifica
+            token_str = custom_token.decode("utf-8") if isinstance(custom_token, bytes) else custom_token
+            
+            # Troca o token customizado por ID Token usando a API Web do Firebase
+            api_key = os.environ.get("VITE_FIREBASE_API_KEY", "AIzaSyBTsl2qXq3_CwkLUI0bGWRLKbw8xyDvlEo")
+            
+            print("[AUTH] Trocando token customizado por Firebase ID Token JWT...")
+            url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key={api_key}"
+            resp = requests.post(url, json={
+                "token": token_str,
+                "returnSecureToken": True
+            })
+            resp.raise_for_status()
+            id_token = resp.json()["idToken"]
+            print("[AUTH] Token JWT obtido com sucesso via Service Account!")
+            return id_token
+        except Exception as e:
+            print(f"[WARN] Falha ao gerar token via Service Account: {e}")
+            print("       Instale 'firebase-admin' no seu python se necessário: pip install firebase-admin")
     
     # Caso contrário, pede no terminal
     print("\n[AUTH] Token Firebase ID necessário para autenticar como admin.")

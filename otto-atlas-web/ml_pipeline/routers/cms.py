@@ -93,6 +93,68 @@ async def create_case(case: ClinicalCasePayload, _admin: str = Depends(verify_ad
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/cases/rescue-count")
+async def get_rescue_count():
+    """Conta casos 'Resgate Nuvem' no Acervo aguardando curadoria."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT COUNT(*) FROM clinical_cases
+            WHERE title LIKE 'Resgate Nuvem:%%'
+            AND is_deleted = FALSE
+        """)
+        count = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return {"success": True, "count": count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/cases/training-export")
+async def training_export():
+    """
+    Exporta todos os casos marcados como 'retrain_candidate' para alimentar o pipeline de retreino.
+    Retorna { id, correct_class, image_url } — prontos para o data_sync.py ou script de dataset.
+    Apenas leitura — nunca modifica dados.
+    """
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, primary_diagnosis, media_urls, taxonomies
+            FROM clinical_cases
+            WHERE is_deleted = FALSE
+              AND taxonomies::text LIKE '%%retrain_candidate%%'
+            ORDER BY id DESC
+        """)
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        def safe_json(val, default):
+            if isinstance(val, (dict, list)): return val
+            if not val: return default
+            try: return json.loads(val)
+            except: return default
+
+        export = []
+        for r in rows:
+            case_id, primary_diagnosis, media_urls_raw, taxonomies_raw = r
+            urls = safe_json(media_urls_raw, [])
+            taxonomies = safe_json(taxonomies_raw, [])
+            if urls:
+                export.append({
+                    "id": case_id,
+                    "correct_class": primary_diagnosis or "sem_diagnostico",
+                    "image_url": urls[0],
+                    "all_taxonomies": taxonomies,
+                })
+
+        return {"success": True, "total": len(export), "cases": export}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/cases/{case_id}")
 async def get_case(case_id: int):
     try:
@@ -177,24 +239,6 @@ async def update_svg(case_id: int, payload: SVGPayload, _admin: str = Depends(ve
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/cases/rescue-count")
-async def get_rescue_count():
-    """Conta casos 'Resgate Nuvem' no Acervo aguardando curadoria."""
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT COUNT(*) FROM clinical_cases
-            WHERE title LIKE 'Resgate Nuvem:%%'
-            AND is_deleted = FALSE
-        """)
-        count = cur.fetchone()[0]
-        cur.close()
-        conn.close()
-        return {"success": True, "count": count}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.post("/cases/rescue-to-curadoria")
 async def rescue_to_curadoria(_admin: str = Depends(verify_admin)):
@@ -271,51 +315,6 @@ async def rescue_to_curadoria(_admin: str = Depends(verify_admin)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@router.get("/cases/training-export")
-async def training_export():
-    """
-    Exporta todos os casos marcados como 'retrain_candidate' para alimentar o pipeline de retreino.
-    Retorna { id, correct_class, image_url } — prontos para o data_sync.py ou script de dataset.
-    Apenas leitura — nunca modifica dados.
-    """
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT id, primary_diagnosis, media_urls, taxonomies
-            FROM clinical_cases
-            WHERE is_deleted = FALSE
-              AND taxonomies::text LIKE '%%retrain_candidate%%'
-            ORDER BY id DESC
-        """)
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-
-        def safe_json(val, default):
-            if isinstance(val, (dict, list)): return val
-            if not val: return default
-            try: return json.loads(val)
-            except: return default
-
-        export = []
-        for r in rows:
-            case_id, primary_diagnosis, media_urls_raw, taxonomies_raw = r
-            urls = safe_json(media_urls_raw, [])
-            taxonomies = safe_json(taxonomies_raw, [])
-            if urls:
-                export.append({
-                    "id": case_id,
-                    "correct_class": primary_diagnosis or "sem_diagnostico",
-                    "image_url": urls[0],
-                    "all_taxonomies": taxonomies,
-                })
-
-        return {"success": True, "total": len(export), "cases": export}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/cases/{case_id}")
