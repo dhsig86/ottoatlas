@@ -1,6 +1,27 @@
 import { useState, useRef } from 'react';
-import { Upload, Activity, Check, X, Send } from 'lucide-react';
+import { Upload, Activity, Check, X, Send, Printer } from 'lucide-react';
 import { predictOtoscopyImage, sendFeedbackToLegacySystem, PredictionResult } from '../services/api';
+
+export function formatClassName(className: string): string {
+  const map: Record<string, string> = {
+    'cerume_obstrucao': 'Corpo Estranho / Obstrução (Cerume)',
+    'nao_otoscopica': 'Imagem Não Otoscópica',
+    'normal': 'Normal',
+    'otite_externa_aguda': 'Otite Externa Aguda',
+    'otite_media_aguda': 'Otite Média Aguda',
+    'otite_media_cronica': 'Otite Média Crônica',
+    'otite_media_serosa': 'Otite Média Secretora (OMS)',
+    'timpanoesclerose': 'Timpanoesclerose',
+    'tubo_de_ventilacao': 'Tubo de Ventilação'
+  };
+  
+  if (map[className]) return map[className];
+  
+  return className
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
 
 export function AIAnalyzer() {
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -40,6 +61,209 @@ export function AIAnalyzer() {
     } finally {
       setIsAnalyzing(false);
     }
+  };
+
+  const handlePrint = () => {
+    if (!predictions || !imagePreview) return;
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('Por favor, libere os pop-ups para imprimir o relatório.');
+      return;
+    }
+    
+    const dateStr = new Date().toLocaleString('pt-BR');
+    const htmlContent = `
+      <html>
+        <head>
+          <title>Relatório OTOSCOP-IA - OTTO Atlas</title>
+          <style>
+            body {
+              font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+              color: #1e293b;
+              margin: 0;
+              padding: 40px;
+              line-height: 1.5;
+            }
+            .header {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              border-bottom: 2px solid #0f172a;
+              padding-bottom: 15px;
+              margin-bottom: 30px;
+            }
+            .title {
+              font-size: 24px;
+              font-weight: 800;
+              color: #0f172a;
+              margin: 0;
+            }
+            .subtitle {
+              font-size: 14px;
+              color: #64748b;
+              margin-top: 5px;
+              font-weight: 600;
+            }
+            .date {
+              font-size: 14px;
+              color: #64748b;
+              text-align: right;
+            }
+            .content {
+              display: flex;
+              gap: 30px;
+              margin-bottom: 40px;
+            }
+            .image-container {
+              flex: 1;
+              max-width: 350px;
+              border: 1px solid #cbd5e1;
+              border-radius: 8px;
+              overflow: hidden;
+              background: #f8fafc;
+            }
+            .image-container img {
+              width: 100%;
+              height: auto;
+              display: block;
+            }
+            .results-container {
+              flex: 1.2;
+            }
+            .results-title {
+              font-size: 16px;
+              font-weight: 700;
+              color: #475569;
+              text-transform: uppercase;
+              letter-spacing: 0.05em;
+              margin-bottom: 15px;
+              border-bottom: 1px solid #e2e8f0;
+              padding-bottom: 5px;
+            }
+            .prediction-item {
+              margin-bottom: 15px;
+              padding: 10px;
+              border: 1px solid #e2e8f0;
+              border-radius: 6px;
+              background: #f8fafc;
+            }
+            .prediction-header {
+              display: flex;
+              justify-content: space-between;
+              font-size: 14px;
+              font-weight: 600;
+              margin-bottom: 5px;
+            }
+            .prediction-bar-bg {
+              width: 100%;
+              background: #e2e8f0;
+              height: 8px;
+              border-radius: 4px;
+              overflow: hidden;
+            }
+            .prediction-bar-fill {
+              height: 100%;
+              border-radius: 4px;
+            }
+            .disclaimer {
+              background: #fffbeb;
+              border: 1px solid #fef3c7;
+              color: #78350f;
+              padding: 15px;
+              border-radius: 8px;
+              font-size: 12px;
+              line-height: 1.6;
+              margin-bottom: 50px;
+            }
+            .signature-area {
+              margin-top: 80px;
+              display: flex;
+              justify-content: flex-end;
+            }
+            .signature-line {
+              width: 250px;
+              border-top: 1px solid #94a3b8;
+              text-align: center;
+              font-size: 12px;
+              color: #64748b;
+              padding-top: 5px;
+            }
+            @media print {
+              body {
+                padding: 0;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div>
+              <div class="title">HARTS OTTO ATLAS</div>
+              <div class="subtitle">Relatório Clínico — Análise do OTOSCOP-IA</div>
+            </div>
+            <div class="date">
+              <div>Emitido em: ${dateStr}</div>
+              <div style="font-size: 12px; margin-top: 5px;">Módulo Auxiliar Diagnóstico ORL</div>
+            </div>
+          </div>
+          
+          <div class="content">
+            <div class="image-container">
+              <img src="${imagePreview}" alt="Imagem Otoscópica Analisada" />
+            </div>
+            <div class="results-container">
+              <div class="results-title">Hipóteses Diagnósticas (Top ${predictions.length})</div>
+              ${predictions.map((p, i) => {
+                const isTop = i === 0;
+                const barColor = isTop ? '#2563eb' : i < 3 ? '#3b82f6' : '#94a3b8';
+                const formattedClass = p.class === 'cerume_obstrucao' ? 'Corpo Estranho / Obstrução (Cerume)' :
+                                      p.class === 'nao_otoscopica' ? 'Imagem Não Otoscópica' :
+                                      p.class === 'normal' ? 'Normal' :
+                                      p.class === 'otite_externa_aguda' ? 'Otite Externa Aguda' :
+                                      p.class === 'otite_media_aguda' ? 'Otite Média Aguda' :
+                                      p.class === 'otite_media_cronica' ? 'Otite Média Crônica' :
+                                      p.class === 'otite_media_serosa' ? 'Otite Média Secretora (OMS)' :
+                                      p.class === 'timpanoesclerose' ? 'Timpanoesclerose' :
+                                      p.class === 'tubo_de_ventilacao' ? 'Tubo de Ventilação' : p.class;
+                return `
+                  <div class="prediction-item" style="${isTop ? 'border-color: #93c5fd; background: #eff6ff;' : ''}">
+                    <div class="prediction-header">
+                      <span>${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`} ${formattedClass}</span>
+                      <span style="font-family: monospace;">${p.confidence.toFixed(1)}%</span>
+                    </div>
+                    <div class="prediction-bar-bg">
+                      <div class="prediction-bar-fill" style="width: ${Math.min(p.confidence, 100)}%; background-color: ${barColor};"></div>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+          
+          <div class="disclaimer">
+            <strong>⚠️ LIMITAÇÃO DE RESPONSABILIDADE / DISCLAIMER CLÍNICO:</strong><br/>
+            Este relatório contém sugestões de hipóteses baseadas exclusivamente no processamento de visão computacional da imagem otoscópica fornecida. 
+            A predição da inteligência artificial **não substitui, nem objetiva, o diagnóstico final ou definitivo do caso**. 
+            O diagnóstico definitivo exige avaliação médica presencial completa realizada por profissional habilitado, com a devida correlação clínica (anamnese detalhada com sintomas como dor, febre, otorreia e otoscopia dinâmica).
+          </div>
+          
+          <div class="signature-area">
+            <div>
+              <div class="signature-line">Assinatura / CRM do Otorrinolaringologista</div>
+            </div>
+          </div>
+          
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 500);
+            };
+          </script>
+        </body>
+      </html>
+    `;
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
   };
 
   const submitFeedback = async () => {
@@ -159,7 +383,7 @@ export function AIAnalyzer() {
                         <div className="flex items-center justify-between mb-1.5">
                           <span className={`text-sm ${textWeight}`}>
                             <span className="mr-1.5">{badge}</span>
-                            {p.class}
+                            {formatClassName(p.class)}
                           </span>
                           <span className={`text-sm font-mono ${isTop ? 'text-brand-600 font-bold' : 'text-slate-500'}`}>
                             {p.confidence.toFixed(1)}%
@@ -174,6 +398,15 @@ export function AIAnalyzer() {
                       </div>
                     );
                   })}
+                </div>
+
+                <div className="mt-4 border-t pt-4">
+                  <button
+                    onClick={handlePrint}
+                    className="w-full bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 py-2.5 px-4 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-sm active:scale-95"
+                  >
+                    <Printer className="w-4 h-4 text-slate-500" /> Imprimir Relatório Clínico
+                  </button>
                 </div>
               </div>
 
