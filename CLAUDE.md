@@ -1,6 +1,6 @@
 # CLAUDE.md — ottoatlas
 
-> Contexto para LLMs. Atualizado: 2026-05-26.
+> Contexto para LLMs. Atualizado: 2026-06-03.
 
 ## O que é
 
@@ -16,12 +16,11 @@ marcações SVG sobre imagens.
 | Frontend    | React 18 + TypeScript + Vite 5      |
 | Styling     | Tailwind CSS 3                      |
 | Auth        | Firebase Auth (Google SSO)          |
-| Database    | Firestore (project: otto-ecosystem) |
-| Storage     | Firebase Storage + Cloudinary       |
+| Database    | NeonDB (Postgres) + Cloudinary (images) |
 | IA Backend  | FastAPI (Render) — classificação otoscópica |
 | Icons       | lucide-react                        |
 | Analytics   | @vercel/analytics                   |
-| Deploy      | Vercel                              |
+| Deploy      | Vercel (frontend) + Render (backend)|
 
 ## Funcionalidades
 
@@ -113,6 +112,7 @@ npm install          # Instalar dependências
 npm run dev          # Dev server (porta 5173 por padrão)
 npm run build        # Build de produção (tsc && vite build)
 npm run preview      # Preview do build de produção
+npm run test         # Executar testes unitários (Vitest)
 ```
 
 ## Variáveis de Ambiente
@@ -149,3 +149,55 @@ VITE_CLOUDINARY_CLOUD_NAME=   # Cloudinary para upload de imagens
 3. O quiz (`quizData.ts`) é independente do mockData — tem seu próprio banco de questões.
 4. O SVG Studio permite criar hotspots sobre imagens, armazenados no campo `hotspots` do AtlasItem.
 5. O backend IA (OTOSCOP-IA) é um microserviço separado — não está neste repo.
+
+## Segurança
+
+- Auth admin via Firebase Google SSO — `adminAuth.ts` verifica e-mail autorizado (`VITE_ADMIN_EMAIL` ou fallback `dr.dhsig@gmail.com`)
+- CSP `frame-ancestors` restrito via `vercel.json` (PWA + Vercel + Firebase Hosting)
+- `X-Content-Type-Options: nosniff` + `Referrer-Policy: strict-origin-when-cross-origin`
+- EXIF/GPS strip antes do upload (`imageUtils.ts`) — LGPD ACT-04 compliance
+- Compressão client-side antes do upload (`imageCompressor.ts`)
+- **Feedback/doação comunitária**: endpoints abertos (sem auth) — intencional para engajamento
+- **Curadoria/admin**: endpoints protegidos com `getAuthHeaders()`
+
+### postMessage Origin Validation (Sprint 2026-06-05)
+
+Mensagens `postMessage` recebidas são validadas contra allowlist explícita em `App.tsx`:
+
+```typescript
+const ALLOWED_ORIGINS = [
+  'https://otto.drdariohart.com',
+  'https://ottopwa.vercel.app',
+  'https://ottos-plum.vercel.app',
+  'http://localhost:5173',
+];
+
+// Receber — App.tsx message handler:
+if (!ALLOWED_ORIGINS.includes(event.origin)) return;
+
+// Enviar — ready signal:
+ALLOWED_ORIGINS.forEach(origin => {
+  try { window.parent.postMessage({ type: 'otto-atlas-ready' }, origin); } catch {}
+});
+```
+
+> ⚠️ **Regra de segurança:** NUNCA usar `'*'` como targetOrigin em `postMessage`. Sempre validar `event.origin` contra `ALLOWED_ORIGINS`.
+
+## Pontos de Atenção para Curadoria
+
+1. ~~**Debris e zip de 116 MB**~~ — ✅ Resolvido: removidos `OTTO_Kaggle_Dataset.zip`, logs, dumps, `__pycache__`
+2. ~~**Paths quebrados em produção**~~ — ✅ Corrigido: `OtoscopyInstructionsModal` agora usa `/images/` (copiados para `public/`)
+3. ~~**Dead deps (express, heroku scripts)**~~ — ✅ Removidos do `package.json`
+4. ~~**`.gitignore` da raíz incompleto**~~ — ✅ Expandido para cobertura completa
+5. ~~**Sem postMessage integration**~~ — ✅ Resolvido: `App.tsx` agora implementa handshake PWA com origin validation (`otto-context` / `otto-atlas-ready`)
+6. **Testes Automatizados:** Suíte de testes configurada com Vitest e React Testing Library no frontend, cobrindo `data/data.test.ts` (integridade de mockData/quizData) e `components/AtlasQuiz.test.tsx`.
+7. **AtlasManagerV4.tsx monolítico** — 728 linhas, candidato a split
+8. **`alert()` em api.ts:77** — Mostra alert para usuários finais em erro de predição IA (deveria ser toast)
+
+---
+
+## Changelog
+
+| Data | Mudança | Commit |
+|------|---------|--------|
+| 2026-06-05 | `App.tsx` — postMessage origin validation adicionada + `console.log` removido | `f35f109` |
