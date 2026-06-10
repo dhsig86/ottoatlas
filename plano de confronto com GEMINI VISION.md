@@ -1,8 +1,23 @@
 # Plano de Confronto com Gemini Vision: MLOps e Polimento do Modelo ONNX
 
-Este documento detalha o plano estratégico e técnico para usar o **Gemini Vision API** como balizador e refinador dos modelos locais de aprendizagem profunda (**ResNet18 ONNX**) no ecossistema **OTTO ATLAS**.
+Este documento detalha o plano estratégico e técnico para usar o **Gemini Vision API** como balizador, oráculo de validação e refinador pós-modelo para otimizar os modelos locais de aprendizagem profunda (**ResNet18 ONNX**, **ConvNeXt-Tiny**, **EfficientNet-B2**) no ecossistema **OTTO ATLAS**.
 
-A integração de modelos locais leves com LLMs multimodais de escala de bilhões de parâmetros cria um ciclo de feedback inteligente que impulsiona o desempenho e a precisão do classificador clínico sem a necessidade de anotação manual em massa.
+> [!IMPORTANT]
+> **Premissa Estratégica Central:** O Gemini Vision API **NUNCA** é treinado ou modificado neste processo. O Gemini Vision atua estritamente como um oráculo de rotulagem e filtro pós-modelo. O valor proprietário e de produto do OTTO reside inteiramente nos modelos locais compactos executados de forma ágil e offline no frontend ou em instâncias leves, garantindo independência tecnológica.
+
+---
+
+## 🩺 Alinhamento Estratégico: O Modelo Local como Produto
+
+O refinamento contínuo e a apresentação de predições do OTTO ATLAS são orientados pelas seguintes diretrizes de negócio e usabilidade clínica:
+
+### A. Foco Pedagógico (Médicos Generalistas e Estudantes)
+* **Objetivo de Assertividade:** A predição não deve apenas fornecer uma classe seca, mas sim uma sugestão clínica explicativa e confiável. O produto é desenhado para apoiar o raciocínio de estudantes de medicina, residentes e otorrinolaringologistas não-especialistas.
+* **Exibição Pós-Modelo:** O confronto automatizado com modelos multimodais de visão serve como um filtro de controle de qualidade posterior. Caso o modelo local apresente divergência alta contra o Gemini Vision, a UI pode suavizar as probabilidades e sugerir cautela ("Diferenciais em consideração"), prevenindo erros diagnósticos em ponta operada.
+
+### B. Visão de Futuro (OTOSCOP-IA v2)
+* **Mapeamento Clínico Avançado:** Inspirado nas metodologias de segmentação fina e classificação do artigo de **Sumatosima** (arquivado nas referências do ecossistema), a versão v2 do OTOSCOP-IA evoluirá para além da classificação simples.
+* **Detecção Anatômica:** O objetivo futuro será detectar detalhes estruturais da membrana timpânica (cabo do martelo, triângulo luminoso, presença de retrações, abaulamentos, hiperemias e perfurações) gerando descrições textuais ricas combinadas com a saída do modelo local. No momento, o foco permanece em atingir e manter a máxima acurácia nas 9 classes de triagem.
 
 ---
 
