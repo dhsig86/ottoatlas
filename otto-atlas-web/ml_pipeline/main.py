@@ -175,6 +175,74 @@ def lazy_load_model():
         print(f"Alerta: Modelo ONNX não encontrado em {BASE_DIR}. Verifique o Render Disk ou ml_pipeline/models/.")
 
 
+KAGGLE_VOCAB_TO_CANONICAL = {
+    "CERUME OBSTRUCAO": "cerume_obstrucao",
+    "CERUME OBSTRUÇÃO": "cerume_obstrucao",
+    "CERUME_OBSTRUCAO": "cerume_obstrucao",
+    "NAO OTOSCOPICA": "nao_otoscopica",
+    "NAO_OTOSCOPICA": "nao_otoscopica",
+    "NORMAL": "normal",
+    "NORMAL (100%)": "normal",
+    "NORMAL (39%)": "normal",
+    "NORMAL (48%)": "normal",
+    "NORMAL (49%)": "normal",
+    "NORMAL (55%)": "normal",
+    "NORMAL (61%)": "normal",
+    "NORMAL (72%)": "normal",
+    "NORMAL (76%)": "normal",
+    "NORMAL (77%)": "normal",
+    "NORMAL (86%)": "normal",
+    "NORMAL (87%)": "normal",
+    "NORMAL (96%)": "normal",
+    "NORMAL (97%)": "normal",
+    "NORMAL (98%)": "normal",
+    "NORMAL (99%)": "normal",
+    "NORMAL_100_OTITE_MEDIA_CRONICA_0_NAO_OTOSCOPICA_0": "normal",
+    "NORMAL_100_OTITE_MEDIA_CRONICA_0_OBSTRUCAO_0": "normal",
+    "NORMAL_100_OTITE_MEDIA_CRONICA_0_OTITE_MEDIA_AGUDA_0": "normal",
+    "NORMAL_59_NAO_OTOSCOPICA_36_OTITE_EXTERNA_AGUDA_4": "normal",
+    "NORMAL_75_OTITE_MEDIA_CRONICA_24_NAO_OTOSCOPICA_0": "normal",
+    "NORMAL_78_OTITE_EXTERNA_AGUDA_14_OTITE_MEDIA_CRONICA_6": "normal",
+    "NORMAL_89_OTITE_MEDIA_CRONICA_9_OTITE_EXTERNA_AGUDA_2": "normal",
+    "NORMAL_97_OTITE_MEDIA_CRONICA_2_OTITE_EXTERNA_AGUDA_1": "normal",
+    "OBSTRUCAO (53%), OTITE EXTERNA AGUDA (25%), NAO OTOSCOPICA (21%)": "cerume_obstrucao",
+    "OBSTRUCAO (78%)": "cerume_obstrucao",
+    "OBSTRUCAO_53_OTITE_EXTERNA_AGUDA_25_NAO_OTOSCOPICA_21": "cerume_obstrucao",
+    "OSTEOMAS": "cerume_obstrucao",
+    "OSTEOMAS_E_EXOSTOSE": "cerume_obstrucao",
+    "OTITE EXTERNA AGUDA": "otite_externa_aguda",
+    "OTITE EXTERNA AGUDA (79%)": "otite_externa_aguda",
+    "OTITE EXTERNA AGUDA (89%), NAO OTOSCOPICA (6%), OBSTRUCAO (4%)": "otite_externa_aguda",
+    "OTITE EXTERNA DESCAMATIVA": "otite_externa_aguda",
+    "OTITE MEDIA AGUDA": "otite_media_aguda",
+    "OTITE MEDIA CRONICA": "otite_media_cronica",
+    "OTITE MEDIA CRONICA (97%)": "otite_media_cronica",
+    "OTITE MÉDIA AGUDA": "otite_media_aguda",
+    "OTITE MÉDIA CRÔNICA ATELECTÁSICA": "otite_media_cronica",
+    "OTITE MÉDIA CRÔNICA SIMPLES": "otite_media_cronica",
+    "OTITE_EXTERNA_AGUDA": "otite_externa_aguda",
+    "OTITE_EXTERNA_AGUDA_89_NAO_OTOSCOPICA_6_OBSTRUCAO_4": "otite_externa_aguda",
+    "OTITE_MEDIA_AGUDA": "otite_media_aguda",
+    "OTITE_MEDIA_CRONICA": "otite_media_cronica",
+    "TIMPANOESCLEROSE": "timpanoesclerose",
+    "TUBO DE VENTILACAO": "tubo_de_ventilacao",
+    "TUBO_DE_VENTILACAO": "tubo_de_ventilacao",
+    "_DISCARD_": "_DISCARD_"
+}
+
+DISPLAY_NAMES = {
+    "cerume_obstrucao":     "Cerume / Obstrução",
+    "nao_otoscopica":       "Não Otoscópica",
+    "normal":               "Normal",
+    "otite_externa_aguda":  "Otite Externa Aguda",
+    "otite_media_aguda":    "Otite Média Aguda",
+    "otite_media_cronica":  "Otite Média Crônica",
+    "otite_media_serosa":   "Otite Média Serosa",
+    "timpanoesclerose":     "Timpanoesclerose",
+    "tubo_de_ventilacao":   "Tubo de Ventilação",
+}
+
+
 @app.post("/api/predict")
 def predict_image(file: UploadFile = File(...)):
     lazy_load_model()
@@ -210,37 +278,162 @@ def predict_image(file: UploadFile = File(...)):
         exp_L = np.exp(logits - np.max(logits))
         probs = exp_L / np.sum(exp_L)
         
-        # Mapeamento de display: nomes bonitos com acentos para a UI clínica
-        DISPLAY_NAMES = {
-            "cerume_obstrucao":     "Cerume / Obstrução",
-            "nao_otoscopica":       "Não Otoscópica",
-            "normal":               "Normal",
-            "otite_externa_aguda":  "Otite Externa Aguda",
-            "otite_media_aguda":    "Otite Média Aguda",
-            "otite_media_cronica":  "Otite Média Crônica",
-            "otite_media_serosa":   "Otite Média Serosa",
-            "timpanoesclerose":     "Timpanoesclerose",
-            "tubo_de_ventilacao":   "Tubo de Ventilação",
-        }
+        # Inicializa o dicionário de probabilidades canônicas zerado
+        canonical_probs = {k: 0.0 for k in DISPLAY_NAMES.keys()}
         
-        def display_name(raw: str) -> str:
-            key = raw.lower().replace("-samples", "").replace(" ", "_").strip()
-            return DISPLAY_NAMES.get(key, raw.replace("_", " ").title())
+        # Agrupa e soma as probabilidades
+        for v, p in zip(vocab, probs):
+            canonical_class = KAGGLE_VOCAB_TO_CANONICAL.get(v, "_DISCARD_")
+            if canonical_class != "_DISCARD_":
+                if canonical_class in canonical_probs:
+                    canonical_probs[canonical_class] += float(p)
         
+        # Renormaliza as probabilidades para que a soma dos válidos seja exatamente 1.0
+        total_sum = sum(canonical_probs.values())
+        if total_sum > 0:
+            for k in canonical_probs:
+                canonical_probs[k] /= total_sum
+                
         # Combina classes com probabilidades e ordena
-        predictions = [{"class": display_name(str(v)), "confidence": round(float(p) * 100, 1)} for v, p in zip(vocab, probs)]
+        predictions = [
+            {"class": DISPLAY_NAMES[key], "confidence": round(canonical_probs[key] * 100, 1)}
+            for key in canonical_probs
+        ]
         predictions.sort(key=lambda x: x["confidence"], reverse=True)
         
         return {
             "predictions": predictions[:5],
             "disclaimer": "Sugestão baseada exclusivamente na imagem. Não substitui avaliação clínica completa (anamnese, otoscopia dinâmica, exame físico).",
-            "model_version": "v2.0-resnet18"
+            "model_version": "v3.0-resnet18-kaggle"
         }
         
+
+def get_gemini_api_key():
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("GEMINI_API_KEY="):
+                        key = line.strip().split("=", 1)[1]
+                        os.environ["GEMINI_API_KEY"] = key
+                        break
+    return key
+
+
+@app.post("/api/predict/confronto")
+def predict_confronto(file: UploadFile = File(...)):
+    lazy_load_model()
+    if not ort_session or not vocab:
+        return {"error": "O cérebro ONNX não está carregado. Verifique os logs do servidor."}
+    
+    contents = file.file.read()
+    
+    local_predictions = []
+    local_error = None
+    try:
+        import numpy as np
+        img = Image.open(io.BytesIO(contents)).convert("RGB")
+        img_resized = img.resize((224, 224), Image.Resampling.BILINEAR)
+        img_arr = np.array(img_resized).astype(np.float32) / 255.0
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        img_arr = (img_arr - mean) / std
+        img_arr = np.transpose(img_arr, (2, 0, 1))
+        input_tensor = np.expand_dims(img_arr, axis=0)
+        
+        inputs = {ort_session.get_inputs()[0].name: input_tensor}
+        logits = ort_session.run(None, inputs)[0][0]
+        
+        exp_L = np.exp(logits - np.max(logits))
+        probs = exp_L / np.sum(exp_L)
+        
+        canonical_probs = {k: 0.0 for k in DISPLAY_NAMES.keys()}
+        for v, p in zip(vocab, probs):
+            canonical_class = KAGGLE_VOCAB_TO_CANONICAL.get(v, "_DISCARD_")
+            if canonical_class != "_DISCARD_":
+                if canonical_class in canonical_probs:
+                    canonical_probs[canonical_class] += float(p)
+        
+        total_sum = sum(canonical_probs.values())
+        if total_sum > 0:
+            for k in canonical_probs:
+                canonical_probs[k] /= total_sum
+                
+        local_predictions = [
+            {"class": DISPLAY_NAMES[key], "confidence": round(canonical_probs[key] * 100, 1)}
+            for key in canonical_probs
+        ]
+        local_predictions.sort(key=lambda x: x["confidence"], reverse=True)
+        local_predictions = local_predictions[:5]
     except Exception as e:
         import traceback
         print(traceback.format_exc())
-        return {"error": f"Falha na inferência estrutural ONNX: {str(e)}"}
+        local_error = f"Falha na inferência local ONNX: {str(e)}"
+
+    gemini_key = get_gemini_api_key()
+    gemini_response = ""
+    gemini_error = None
+    
+    if gemini_key:
+        try:
+            import base64
+            img_b64 = base64.b64encode(contents).decode("utf-8")
+            
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+            
+            headers = {"Content-Type": "application/json"}
+            prompt_text = (
+                "Você é um renomado médico especialista em Otorrinolaringologia (ORL). "
+                "Examine esta imagem otoscópica com extremo rigor científico e gere um relatório clínico estruturado. "
+                "Foque na descrição detalhada dos marcos anatômicos visíveis: "
+                "1. Coloração e brilho da membrana timpânica (normal, hiperêmica, opaca, presença de reflexo luminoso). "
+                "2. Integridade e posição (íntegra, perfurada, abaulada, retraída, nível de transparência). "
+                "3. Cabo do martelo e demais estruturas de orelha média visíveis. "
+                "Conclua sugerindo a hipótese diagnóstica ORL principal de forma probabilística (ex: sinais compatíveis com Otite Média Aguda, membrana normal, obstrução por cerume, etc.). "
+                "Seja técnico, conciso e redija a resposta em português do Brasil."
+            )
+            
+            body = {
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": prompt_text},
+                            {
+                                "inlineData": {
+                                    "mimeType": "image/jpeg",
+                                    "data": img_b64
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+            
+            resp = requests.post(gemini_url, headers=headers, json=body, timeout=20)
+            if resp.status_code == 200:
+                resp_json = resp.json()
+                try:
+                    gemini_response = resp_json["candidates"][0]["content"]["parts"][0]["text"]
+                except Exception as e:
+                    gemini_error = f"Estrutura de resposta inesperada do Gemini API: {str(e)}"
+            else:
+                gemini_error = f"Erro HTTP {resp.status_code} na API do Gemini: {resp.text}"
+        except Exception as e:
+            gemini_error = f"Falha ao chamar a API do Gemini Vision: {str(e)}"
+    else:
+        gemini_error = "Variável de ambiente GEMINI_API_KEY não configurada no servidor."
+
+    return {
+        "predictions_local": local_predictions,
+        "local_error": local_error,
+        "predictions_gemini": gemini_response,
+        "gemini_error": gemini_error,
+        "disclaimer": "Confronto de IAs (Otoscopia-IA ONNX vs. Gemini Vision API). Uso pedagógico e informativo de auxílio diagnóstico.",
+        "model_version": "v3.0-resnet18-onnx"
+    }
+
 
 @app.get("/api/curadoria/pending")
 def get_pending_feedback(_admin: str = Depends(verify_admin)):
@@ -343,13 +536,39 @@ async def auto_tag_batch(_admin: str = Depends(verify_admin)):
                 exp_L = np.exp(logits - np.max(logits))
                 probs = exp_L / np.sum(exp_L)
 
+                # Inicializa probabilidades das 9 classes canônicas zeradas
+                canonical_probs = {
+                    "cerume_obstrucao": 0.0,
+                    "nao_otoscopica": 0.0,
+                    "normal": 0.0,
+                    "otite_externa_aguda": 0.0,
+                    "otite_media_aguda": 0.0,
+                    "otite_media_cronica": 0.0,
+                    "otite_media_serosa": 0.0,
+                    "timpanoesclerose": 0.0,
+                    "tubo_de_ventilacao": 0.0,
+                }
+                
+                # Agrupa e soma as probabilidades
+                for v, p in zip(vocab, probs.tolist()):
+                    canonical_class = KAGGLE_VOCAB_TO_CANONICAL.get(v, "_DISCARD_")
+                    if canonical_class != "_DISCARD_":
+                        if canonical_class in canonical_probs:
+                            canonical_probs[canonical_class] += p
+                            
+                # Renormaliza as probabilidades
+                total_sum = sum(canonical_probs.values())
+                if total_sum > 0:
+                    for k in canonical_probs:
+                        canonical_probs[k] /= total_sum
+
                 # Top-3 classes normalizadas (sem acentos, snake_case — padrão backend)
                 preds = sorted(
-                    zip(vocab, probs.tolist()),
+                    canonical_probs.items(),
                     key=lambda x: x[1], reverse=True
                 )[:3]
                 top_classes = ' | '.join(
-                    f"{normalize_class_name(str(v))}:{p:.2f}" for v, p in preds
+                    f"{normalize_class_name(str(k))}:{p:.2f}" for k, p in preds
                 )
 
                 cur.execute(
